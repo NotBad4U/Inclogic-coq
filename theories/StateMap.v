@@ -51,3 +51,6 @@ Theorem t_update_same : forall (m : M.t nat) x v,
   StateMap.get m x = Some v ->
   (x !->  v; m) = m.
 Admitted.
+
+Definition var_eq (s1:string) (s2:string) : bool :=
+  if String.string_dec s1 s2 then true else false.

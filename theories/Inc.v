@@ -205,8 +205,8 @@ Inductive Signal: Type :=
 Inductive ceval : com -> state -> Signal -> state -> Prop :=
 | E_Skip : forall st,
   st =[ skip ]=> ok : st
-| E_Local : forall st x,
-  st =[ local x ]=> ok : (x !-> 0 ; st)
+| E_Local : forall st x y,
+  st =[ local x ]=> ok : (x !-> y ; st)
 | E_Asgn : forall st a n x,
   aeval st a = Some n ->
   st =[ x := a ]=> ok : (x !-> n ; st)
@@ -507,6 +507,29 @@ Proof.
   inversion Heval; subst; eauto.  
 Qed.
 
+(* FIXME: *)
+(*
+  [p(n)] C [ok: p(n+1)]
+  ----------------------- (Backwards Variant (where n fresh))
+  [p(0)] C⋆ [ε: ∃ n. p(n)]
+*)
+Theorem Inc_IterBackwardsVariant : forall (P: nat -> Assertion) c ε,
+  (forall n: nat,
+  [[ (P n) ]] c [[ ε ↑ (P (n + 1) ) ]]) ->
+  [[ (P 0) ]] c ⋆ [[ ε ↑ fun st' =>  exists m, (P m) st' ]].
+Proof.
+  intros P c ε H st' [ m HPost].
+  unfold Inc_triple in H.
+  induction m.
+  - admit.
+  - apply IHm.
+    assert (H2 : S m = m + 1). apply (eq_sym (add_1_r m)).
+    rewrite H2 in HPost.
+    specialize (H m st' HPost) as [st [Heval Hpre] ].
+Admitted.
+
+
+
 Reserved Notation "C'^'n" (at level 1, no associativity).
 
 
@@ -516,7 +539,32 @@ match n with
 | S m => <{ C ; Cpow m C }>
 end.
 
+(* FIXME: *)
+Theorem DeriveIteration : forall P c ε Q b,
+  forall x, x < b -> [[ P ]] Cpow x c [[ ε ↑ Q ]] ->
+  [[ P ]] c ⋆ [[ ε ↑ fun st' => x < b -> Q st' ]].
+Proof with auto.
+  intros P c ε Q b x H HCstarSeq st HQ.
+  destruct x.
+  - simpl in *. exists st.
+    specialize (HQ H).
+    specialize (HCstarSeq st HQ) as [ st' [ Heval HP ] ].
+    inversion Heval. subst.
+    split...
+  - simpl in *.
+    specialize (HQ H).
+    (* unfold Inc_triple in HCstarSeq. *)
+    pose (HCstarSeq st HQ).
+    destruct e as [ st' [ Heval HP ] ].
+    unfold Inc_triple in HCstarSeq.
+    apply lt_succ_l in H.
+    exists st'.
 
+    admit.
+    (* apply IHx H  *)
+  (* specialize (HCstarSeq st' HQ) as [ st [ Heval HP ] ]. *)
+  (* inversion Heval; subst; eauto.   *)
+Admitted.
 
 (*
   -------------------------------------------------- (Assignment)
@@ -605,6 +653,63 @@ Proof with auto.
   - specialize (H2 _ HQ2) as [ st2 [ Hc2Eval HPre2 ] ].
     exists st2...  
 Qed.
+
+(* substAexp x y a, which replaces all occurrences of a variable x with a value y inside an arithmetic expression a. *)
+Fixpoint substAexp (x: string) (y: aexp) (a: aexp) : aexp :=
+match a with
+  | ANum n => ANum n
+  | AId var => if var_eq x var then y else x
+  | <{a1 + a2}> => <{(substAexp x y a1) + (substAexp x y a2)}>
+end.
+
+(* substBeval x y b, which replaces all occurrences of a variable x with a value y inside a boolean expression b. *)
+Fixpoint substBeval (x: string) (y: aexp) (b: bexp) : bexp :=
+let auxa t := substAexp x y t in
+let aux t := substBeval x y t in
+match b with
+| BTrue => BTrue
+| BFalse => BFalse
+| BEq a1 a2 => BEq (auxa a1) (auxa a2)
+| BNot b => aux b
+end.
+
+(* subst x y c, which replaces all occurrences of a variable x with a value y inside a command c. *)
+Fixpoint substCmd (x: string) (y: aexp) (c: com) : com :=
+let aux t := substCmd x y t in
+match y with 
+| AId yvar => 
+  let if_y_eq z t1 t2 := if var_eq x z then t1 (* change nothing *) else t2 (* update *) in
+  match c with
+  | Skip => Skip
+  | Asign x' v =>  if_y_eq x' (Asign yvar (substAexp x y v)) (Asign x' (substAexp x y v)) 
+  | Seq c1 c2 => Seq (aux c1) (aux c2) 
+  | Assume b => Assume b
+  | Error => Error
+  | Star c => Star (aux c)
+  | Choice c1 c2 => Choice (aux c1) (aux c2)
+  end
+| w => 
+  match c with
+  | Skip => Skip
+  | Asign var exp =>  (Asign var (substAexp x w exp))
+  | Seq c1 c2 => Seq (aux c1) (aux c2) 
+  | Assume b => Assume (substBeval x w b)
+  | Error => Error
+  | Star c => Star (aux c)
+  | Choice c1 c2 => Choice (aux c1) (aux c2)
+  end
+end.
+
+Example testsubstCmd: substCmd "X"%string (AId "Y"%string)
+  <{ "X" := (AId "X"%string); skip; "Z" :=  (AId "X"%string)}> 
+  = <{ "Y" := (AId "Y"%string); skip; "Z" :=  (AId "Y"%string)}>.
+Proof. reflexivity. Qed.
+
+
+Example testsubstCmd2: substCmd "X"%string (APlus (ANum 1) (ANum 1))
+  <{ "Y" := (AId "X"%string); skip; "Z" :=  (APlus (ANum 1) (AId "X"%string))}> 
+  = <{ "Y" := (APlus (ANum 1) (ANum 1)); skip; "Z" := (APlus (ANum 1) (APlus (ANum 1) (ANum 1)))}>.
+Proof. reflexivity. Qed.
 
 
 (* x is free in p if p is invariant under changing x
