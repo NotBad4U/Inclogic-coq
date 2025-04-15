@@ -23,12 +23,24 @@ Module StringEQ <: DecidableType.
   Definition eq_dec := string_dec.
 End StringEQ.
 
+
 Module M := FMapWeakList.Make(StringEQ).
+
+Require Import Coq.MSets.MSetWeakList.
+
+(* Module StringEQFromEqualitiesGnagnagna <: Equalities.DecidableType.
+  Definition t := string.
+  Definition eq := @Coq.Init.Logic.eq t.
+  Definition eq_equiv := Build_Equivalence eq (@refl_equal t) (@sym_eq t) ( @trans_eq t).
+  Definition eq_dec := string_dec.
+End StringEQFromEqualitiesGnagnagna.
+
+Module M' := MSetWeakList.Make(StringEQFromEqualitiesGnagnagna). *)
 
 Definition state := M.t nat.
 
 Definition get (m : state) (k : string) :=
-  M.find k m. 
+  M.find k m.
 
 Definition set (m : state) (k : string) (v : nat) :=
   M.add k v m.
@@ -51,6 +63,3 @@ Theorem t_update_same : forall (m : M.t nat) x v,
   StateMap.get m x = Some v ->
   (x !->  v; m) = m.
 Admitted.
-
-Definition var_eq (s1:string) (s2:string) : bool :=
-  if String.string_dec s1 s2 then true else false.
