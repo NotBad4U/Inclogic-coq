@@ -42,6 +42,12 @@ Definition state := M.t nat.
 Definition get (m : state) (k : string) :=
   M.find k m.
 
+Definition get_with_default (m : state) (k : string) (default: nat) :=
+match M.find k m with
+| Some x => x
+| None => 0
+end.
+
 Definition set (m : state) (k : string) (v : nat) :=
   M.add k v m.
 

@@ -339,6 +339,27 @@ Proof with auto.
 Qed.
 *)
 
+(* 
+  original rule:
+  -------------------------------------(Nondet Assignment)
+  [p] x = nondet() [ok: ∃x', p][er: false]
+
+  original rule:
+  -------------------------------------(Nondet Assignment)
+  [p] nondet x [ok: ∃x', p][er: false]
+
+  we use the notation `nondet x` because we don't create an aexp nondet
+  but rather an `havoc x` that can simulate `nondet` with a local assignment.
+
+  `if (nondet() == 0) t1 t2` is interpreted as `local x; nondet x; if (x == 0) t1 t2`
+*)
+Theorem HInc_Nondet_Assign : forall P (X: string),
+  [[ P ]] Nondet X [[ ok ↑ fun st =>  exists (n: nat), ((P [X |-> n]) st) ]] [[ err ↑ False ]].
+Proof.
+  intros P X.
+  split.
+Admitted.
+
 (*
   [p] C_i [ϵ:q]
   ----------------------- (Choice (where i = 1 or 2))
@@ -406,17 +427,18 @@ Admitted. *)
 *)
 Definition Free x p : Prop := forall st, p st -> forall v, p (x !-> v ; st) .
 
-(* Module FsetString := FSetList.Make(String_as_OT).  *)
+(* Module FsetString := FMapWeakList.Make(StringEQ).  *)
+
 
 (* Mod(C) is the set of variables modified by assignment statements in C *)
-(* Fixpoint Mod (c: com): FsetString.t :=
+(* Fixpoint Mod (c: com): M.t nat :=
 match c with 
 | Asign s a => FsetString.singleton s
 | Seq c1 c2 => FsetString.union (Mod c1) (Mod c2) 
 | _ => FsetString.empty
-end. *)
+end.
 
-(* Example ModTest1 : FsetString.elements (Mod <{ "X" := 1 ; skip ; "Y" := 2  }>)  = [ "X"%string ; "Y"%string ].
+Example ModTest1 : FsetString.elements (Mod <{ "X" := 1 ; skip ; "Y" := 2  }>)  = [ "X"%string ; "Y"%string ].
 Proof. reflexivity. Qed.
 
 Example ModTest2 : FsetString.elements (Mod <{ "X" := 1  }>)  = [ "X"%string ].
@@ -424,14 +446,6 @@ Proof. reflexivity. Qed. *)
 
 (* The rules of Substitution and Constancy, as well as Consequence, are important for adapting
 specifications for use in different contexts *)
-
-
-(* P' that is just like P except that, wherever P looks up the variable X in the current state, P' instead uses the value of the expression a. *)
-Definition assn_sub X a P : Assertion :=
-  fun (st : state) =>
-    exists v, (aeval st a) = Some v -> P (set st X v).
-
-Notation "P [ X |-> a ]" := (assn_sub X a P) (at level 10).
 
 
 Theorem Constancy : forall P Q F c ε,
@@ -449,6 +463,7 @@ split.
 assumption.
 Admitted.
 
+(* 
 Theorem Subst1 : forall P Q c ε e x,
   [[ P ]] c [[ ε ↑ Q ]]
   ->
@@ -461,7 +476,7 @@ Theorem Subst2 : forall P Q c ε y x,
   ->
   [[ P [x |-> y] ]] substCmd x y c [[ ε ↑ Q [x |-> y ] ]].
 Proof.
-Admitted.
+Admitted. *)
 
 
 (* ========================================== 
@@ -549,34 +564,31 @@ Section weakest_under_approximate_post.
 
 Definition is_wup P c Q ε :=
   [[ P ]] c [[ ε ↑ Q ]] /\
-  exists Q', [[ P ]] c [[ ε ↑ Q' ]] -> (Q ->> Q').
+  forall Q', [[ P ]] c [[ ε ↑ Q' ]] -> (Q ->> Q').
 
-Example is_wup_skip: forall A ε, is_wup (fun st => A) <{ skip }> (fun st => A) ε.
-Proof.
-intros A eps. unfold is_wup.
-split.
-- intros st Q. exists st. eauto. 
-- exists A. auto.
-Qed.
 
+Example is_wup_assign: forall ε (X: string), is_wup (fun st => (get_with_default st X 0) = 5 ) (<{ X := (AId X) + 5 }>) (fun st' => (get_with_default st' X 0) = 10) ε.
+Admitted.
+
+(* The weakest under-approximate postcondition (wup) is essentially the definition that makes the incorrectness triple true. *)
 Definition wup (c: com) (P: Assertion) (e: Signal) : Assertion :=
   fun st' => exists st, st =[ c ]=> e : st' /\ P st.
 
-Lemma wup_postcondition: forall c P ε, [[ P ]] c [[ ε ↑ (wup c P ε) ]].
-Proof.
-  unfold Inc_triple, wup.
-  intros.
-  destruct H as [st H2].
-  eauto.
-Qed.
+Lemma wup_postcondition: forall c P ε, [[ P ]] c [[ ε ↑ (wup c P ε) ]]. Proof. auto. Qed.
 
+(* 
+  Just like in Hoare logic we say:
+  {P}c{Q} iff P ⊆ wp(c,Q)
+
+  In Incorrectness logic, we say:
+  [P]c[ε:Q] iff Q ⊆ wup(c,P, ε)
+
+  So the relationship is dually elegant.
+*)
 Lemma wup_weakest_post: forall P c Q ε, [[ P ]] c [[ ε ↑ Q ]] -> (Q ->> wup c P ε).
 Proof.
-  unfold Inc_triple, wup, "->>".
-  intros.
-  specialize (H st).
-  apply H.
-  assumption.
+  unfold wup, "->>".
+  induction c; intros;  specialize (H st);  eapply H in H0; apply H0.
 Qed.
 
 End weakest_under_approximate_post.

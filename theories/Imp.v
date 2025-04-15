@@ -86,24 +86,6 @@ Fixpoint aeval (st : state) (a : aexp) : option nat :=
       end
   end.
 
-
-Inductive aevalR : aexp -> nat -> Prop :=
-  | E_ANum (n : nat) :
-      (ANum n) ==> n
-  | E_APlus (e1 e2 : aexp) (n1 n2 : nat) :
-      (e1 ==> n1) ->
-      (e2 ==> n2) ->
-      (APlus e1 e2) ==> (n1 + n2)
-  | E_AMinus (e1 e2 : aexp) (n1 n2 : nat) :
-      (e1 ==> n1) ->
-      (e2 ==> n2) ->
-      (AMinus e1 e2) ==> (n1 - n2)
-  | E_AMult (e1 e2 : aexp) (n1 n2 : nat) :
-      (e1 ==> n1) ->
-      (e2 ==> n2) ->
-      (AMult e1 e2) ==> (n1 * n2)
-  where "e '==>' n" := (aevalR e n) : type_scope.
-
 Definition NOTEQUAL (a1 a2: aexp) : bexp := <{~ (a1 = a2)}>.
 
 Definition GREATEREQUAL (a1 a2: aexp) : bexp := <{ a2 <= a1 }>.
@@ -189,9 +171,9 @@ Notation "x ; y" :=
 Notation "'assume' l " :=
         (Assume l)
           (in custom com at level 8, l custom com at level 0) : com_scope.
-Notation "'nondet' l " :=
-        (Assume l)
-          (in custom com at level 8, l custom com at level 0) : com_scope.
+Notation "'nondet' x":=
+        (Nondet x)
+          (in custom com at level 8) : com_scope.
 Notation "'error()'" :=
           Error (in custom com at level 0) : com_scope.
 Notation "c '⋆'" :=
@@ -279,8 +261,8 @@ Inductive ceval : com -> state -> Signal -> state -> Prop :=
 | E_ChoiceRight: forall x y st st' ϵ,
   st =[ y ]=> ϵ : st' ->
   st =[ x ⨁ y ]=> ϵ : st'
-(* | E_Nondet: forall x st n,
-  st =[ skip ]=> ok : (x !-> n ; st) *)
+| E_Nondet: forall x st n,
+  st =[ nondet x ]=> ok : (x !-> n ; st)
 where "st =[ c ]=> ϵ : st'" := (ceval c st ϵ st').
 
 Local Hint Constructors ceval : core.
@@ -328,6 +310,13 @@ Open Scope inclogic_spec_scope.
 Notation "P <<->> Q" :=
   (P ->> Q /\ Q ->> P) (at level 80) : inclogic_spec_scope.
 
+
+(* P' that is just like P except that, wherever P looks up the variable X in the current state, P' instead uses the value of the expression a. *)
+Definition assn_sub X a P : Assertion :=
+  fun (st : state) =>
+    exists v, (aeval st a) = Some v -> P (set st X v).
+
+Notation "P [ X |-> a ]" := (assn_sub X a P) (at level 10).
 
 Hint Unfold assert_implies : core.
 
