@@ -250,11 +250,12 @@ Inductive ceval : com -> state -> Signal -> state -> Prop :=
 | E_StarSkip : forall c st ϵ,
   st =[ skip ]=> ϵ : st -> 
   st =[ c ⋆ ]=> ϵ : st
-| E_StarIter : forall c st st' ϵ,
-  (* st =[ c ⋆ ; c  ]=> ϵ : st' -> *)
-  st =[ c ⋆ ]=> ϵ : st ->
-  st =[ c ]=> ϵ : st' -> 
-  st =[ c ⋆ ]=> ϵ : st'
+| E_StarIter : forall c st st' st'' ϵ,
+  st =[ c ⋆ ]=> ok : st' ->
+  st' =[ c ]=> ϵ : st'' -> 
+  st =[ c ⋆ ]=> ϵ : st''
+| E_StarIter_Err : forall c st,
+  st =[ c ⋆ ]=> err : st
 | E_ChoiceLeft: forall x y st st' ϵ,
   st =[ x ]=> ϵ : st' ->
   st =[ x ⨁ y ]=> ϵ : st'

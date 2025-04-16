@@ -252,16 +252,17 @@ Theorem HInc_IterateNonZero : forall P c ε Q,
 [[ P ]] (c ⋆) ; c [[ ε ↑ Q ]] ->
 [[ P ]] c ⋆ [[ ε ↑ Q ]].
 Proof.
-  (* unfold Inc_triple. *)
   intros P c ε Q HCstarSeq. 
   intros st' HQ.
   specialize (HCstarSeq st').
   assert (G : exists st : state, st =[ c ⋆; c ]=> ε : st' /\ P st) by auto.
   destruct G as [ st [Heval HP] ].
-  exists st.
-  split; auto.
   inversion Heval; subst.
-Abort.
+  - exists st.
+     split; auto.
+     econstructor; eauto.
+  - exists st. split; auto.
+Qed.
 
 (* FIXME: *)
 (*
@@ -562,19 +563,23 @@ Section weakest_under_approximate_post.
 
 (*   Proposition 8. StrongestOverPost(r) = WeakestUnderPost(r) = post(r) *)
 
-Definition is_wup P c Q ε :=
-  [[ P ]] c [[ ε ↑ Q ]] /\
-  forall Q', [[ P ]] c [[ ε ↑ Q' ]] -> (Q ->> Q').
-
-
-Example is_wup_assign: forall ε (X: string), is_wup (fun st => (get_with_default st X 0) = 5 ) (<{ X := (AId X) + 5 }>) (fun st' => (get_with_default st' X 0) = 10) ε.
-Admitted.
-
 (* The weakest under-approximate postcondition (wup) is essentially the definition that makes the incorrectness triple true. *)
 Definition wup (c: com) (P: Assertion) (e: Signal) : Assertion :=
   fun st' => exists st, st =[ c ]=> e : st' /\ P st.
 
 Lemma wup_postcondition: forall c P ε, [[ P ]] c [[ ε ↑ (wup c P ε) ]]. Proof. auto. Qed.
+
+(* Definition is_wup P c Q ε :=
+  [[ P ]] c [[ ε ↑ Q ]] /\  (Q -> wup c P ε).
+
+
+Example is_wup_assign: forall ε (X: string), is_wup (fun st => (get_with_default st X 0) = 5 ) (<{ X := (AId X) + 5 }>) (fun st' => (get_with_default st' X 0) = 10) ε.
+intros eps X.
+unfold is_wup.
+split.
+- admit.
+- unfold wup.
+Qed. *)
 
 (* 
   Just like in Hoare logic we say:
