@@ -69,3 +69,11 @@ Theorem t_update_same : forall (m : M.t nat) x v,
   StateMap.get m x = Some v ->
   (x !->  v; m) = m.
 Admitted.
+
+From Coq Require Import ZArith.
+
+Local Open Scope positive_scope.
+
+(* Unset Printing Notations. *)
+
+Search (False -> _).

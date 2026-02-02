@@ -1,5 +1,4 @@
 -R theories IncLogic
-theories/StateMap.v
+theories/Sequences.v
 theories/Imp.v
 theories/Hoare.v
-theories/Inc.v

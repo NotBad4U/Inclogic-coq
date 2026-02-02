@@ -264,6 +264,30 @@ Proof.
   - exists st. split; auto.
 Qed.
 
+
+Theorem HInc_IterateNonZero2 : forall P c ε Q,
+[[ P ]] c ; (c ⋆) [[ ε ↑ Q ]] ->
+[[ P ]] c ⋆ [[ ε ↑ Q ]].
+Proof.
+  intros P c ε Q HCstarSeq. 
+  intros st' HQ.
+  
+  specialize (HCstarSeq st').
+  specialize (HCstarSeq HQ).
+  destruct HCstarSeq as [st [Heval HP] ].
+  (* exists st. *)
+  (* split; auto. *)
+  inversion Heval; subst.
+  - 
+  (* assert (G : exists st : state, st =[ c ⋆; c ]=> ε : st' /\ P st) by auto. *)
+  (* destruct G as [ st [Heval HP] ].
+  inversion Heval; subst.
+  - exists st.
+     split; auto.
+     econstructor; eauto.
+  - exists st. split; auto. *) 
+Abort.
+
 (* FIXME: *)
 (*
   [p(n)] C [ok: p(n+1)]
@@ -463,6 +487,16 @@ assumption.
 split.
 assumption.
 Admitted.
+
+
+
+Fixpoint nfun A n B :=
+ match n with
+  | O => B
+  | S n => A -> (nfun A n B)
+ end.
+
+ Print nfun.
 
 (* 
 Theorem Subst1 : forall P Q c ε e x,

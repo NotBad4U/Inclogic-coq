@@ -1,4 +1,4 @@
-Require Import StateMap.
+(* Require Import StateMap.
 Require Import Imp.
 
 (**
@@ -62,4 +62,4 @@ Proof.
   - specialize (H1 st st').
     specialize (H2 st st'). *)
     
-Admitted.
+Admitted. *)
