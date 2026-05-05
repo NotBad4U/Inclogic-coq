@@ -1,4 +1,5 @@
 -R theories IncLogic
 theories/Sequences.v
+theories/RelKleene.v
 theories/Imp.v
 theories/Hoare.v

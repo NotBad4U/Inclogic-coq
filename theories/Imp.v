@@ -1,5 +1,6 @@
 From Stdlib Require Import Arith ZArith Psatz Bool String List Program.Equality.
-From IncLogic Require Import Sequences.
+From Stdlib Require Import RelationClasses Morphisms Setoid.
+From IncLogic Require Import Sequences RelKleene.
 
 Local Open Scope string_scope.
 Local Open Scope Z_scope.
@@ -144,10 +145,10 @@ Inductive com: Type :=
 
 (** We can write [c1 ;; c2] instead of [SEQ c1 c2], it is easier on the eyes. *)
 
-Infix ";;" := SEQ (at level 80, right associativity).
+Infix ";;" := SEQ (at level 80, right associativity): com_scope.
 
 Notation "c1 '⊕' c2" := (CHOICE c1 c2)
-                         (in custom com at level 85, right associativity).
+                         (at level 85, right associativity): com_scope.
 
 Notation "c '★'" := (CSTAR c)
                          (in custom com at level 90, right associativity).
@@ -254,12 +255,9 @@ Inductive red: com * store -> com * store -> Prop :=
       red (ASSIGN x a, s) (SKIP, update x (aeval a s) s)
   | red_nondet: forall x s n,
     red (NONDET x, s) (SKIP, update x n s)
-  | red_assume_true: forall b s,
-    (* beval b s = true -> *)
+  | red_assume: forall b s,
+    beval b s = true ->
     red (ASSUME b, s) (SKIP, s)
-  (* | red_assume_false: forall b s,
-    beval b s = false ->
-    red (ASSUME b, s) (ERROR, s) *)
   | red_seq_done: forall c s,
       red (SEQ SKIP c, s) (c, s)
   | red_seq_error: forall c s,
@@ -324,49 +322,11 @@ Definition terminates (s: store) (c: com) (s': store) : Prop :=
 Definition diverges (s: store) (c: com) : Prop :=
   infseq red (c, s).
 
-(** Generally speaking, a third kind of executions is possible:
-    "going wrong" after a finite number of reductions.
-   A configuration [(c', s')] "goes wrong" if it cannot reduce and is
-   not a final configuration, that is, [c' <> SKIP] and [c' <> ERROR]. *)
-
-Definition goes_wrong (s: store) (c: com) : Prop :=
-  exists c', exists s',
-  star red (c, s) (c', s') /\ irred red (c', s') /\ c' <> SKIP /\ c' <> ERROR.
-
-(** A command other than [SKIP] can always reduce. *)
-Lemma red_progress:
-  forall c s,
-    c = SKIP \/ c = ERROR \/ exists c', exists s', red (c, s) (c', s').
-Proof.
-  induction c; intros.
-  - left. reflexivity.
-  - right. left. reflexivity.
-  - right. right. exists SKIP. exists (update x (aeval a s) s). apply red_assign.
-  - right. right. exists SKIP. exists (update x 0 s). apply red_nondet.
-  - right. right.  exists SKIP. exists s. apply red_assume_true.
-    (* destruct (beval b s) eqn:HB.
-     + exists SKIP. exists s. apply red_assume_true. (* exact HB. *)
-    + exists ERROR. exists s. apply red_assume_false. exact HB. *)
-  - (* SEQ *)
-    specialize (IHc1 s) as [Hskip | [Herror | (c' & s' & STEP)]].
-    + subst. right. right. exists c2. exists s. apply red_seq_done.
-    + subst. right. right. exists ERROR. exists s. apply red_seq_error.
-    + right. right. exists (SEQ c' c2). exists s'. apply red_seq_step. exact STEP.
-  - right. right. exists c1. exists s. apply red_choice_left.
-  - right. right. exists SKIP. exists s. apply red_cstar_done.
-Qed.
-
-Lemma not_goes_wrong:
-  forall c s, ~(goes_wrong s c).
-Proof.
-  intros c s (c' & s' & STAR & IRRED & NOTSKIP & NOTERROR).
-  (* If [(c',s')] is reachable and [c'] is neither final form, then it must be
-     able to take a reduction step (by [red_progress]), contradicting [irred]. *)
-  destruct (red_progress c' s') as [EQSKIP | [EQERROR | (c'' & s'' & STEP)]].
-  - contradiction.
-  - contradiction.
-  - unfold irred in IRRED. specialize (IRRED (c'', s'') STEP). contradiction.
-Qed.
+(** With guarded [ASSUME], a program can also legitimately *block* (no rule
+    fires) when [ASSUME b] is reached in a state where [beval b s = false].
+    The previous [red_progress] / [not_goes_wrong] lemmas relied on the fact
+    that any non-final configuration could step, which no longer holds here.
+    They have been removed. *)
 
 (* * A technical lemma: a sequence of reductions can take place to the left
     of a [SEQ] constructor.  This generalizes rule [red_seq_step]. *)
@@ -395,11 +355,8 @@ Inductive cexec: store -> com -> result -> Prop :=
   | cexec_nondet: forall s x n,
     s =[ NONDET x ]=> RNormal (update x n s)
   | cexec_assume: forall s b,
-    (* beval b s = true -> *)
+    beval b s = true ->
     s =[ ASSUME b ]=> RNormal s
-  (* | cexec_assume_false: forall s b,
-    beval b s = false ->
-    s =[ ASSUME b ]=> RError *)
   | cexec_seq: forall c1 c2 s s' s'',
     s  =[ c1 ]=> RNormal s' ->
     s' =[ c2 ]=> RNormal s'' ->
@@ -418,14 +375,18 @@ Inductive cexec: store -> com -> result -> Prop :=
     s =[ c2 ]=> r ->
     s =[ CHOICE c1 c2 ]=> r
   | cexec_cstar_done: forall c s,
-    s =[ CSTAR c ]=> RNormal s
-  | cexec_cstar_step_ok: forall c s s' r,
-    s  =[ c ]=> RNormal s' ->
-    s' =[ CSTAR c ]=> r ->
-    s  =[ CSTAR c ]=> r
-  | cexec_cstar_step_error: forall c s,
-    s  =[ c ]=> RError ->
-    s  =[ CSTAR c ]=> RError
+      s =[ CSTAR c ]=> RNormal s
+  | cexec_cstar_step_ok : forall c s s' s'',
+      s  =[ c ]=> RNormal s' ->
+      s' =[ CSTAR c ]=> RNormal s'' ->
+      s  =[ CSTAR c ]=> RNormal s''
+  | cexec_cstar_step_error : forall c s,
+      s =[ c ]=> RError ->
+      s =[ CSTAR c ]=> RError
+  | cexec_cstar_step_iter_error : forall c s s',
+      s  =[ c ]=> RNormal s' ->
+      s' =[ CSTAR c ]=> RError ->
+      s  =[ CSTAR c ]=> RError
   where "st0 =[ c ]=> st1" := (cexec st0 c st1).
 
 Notation "s1 =[ c ]=> 'ok' ↑ s2" := (cexec s1 c (RNormal s2))
@@ -433,6 +394,134 @@ Notation "s1 =[ c ]=> 'ok' ↑ s2" := (cexec s1 c (RNormal s2))
 
 Notation "s1 =[ c ]=> 'err'" := (cexec s1 c RError)
   (at level 40, c at level 99).
+
+(** ** Kleene-algebra view of [CSTAR]
+
+    [step_iter c] is the relation "one successful execution of [c]" on stores.
+    The reflexive-transitive closure [star (step_iter c)] then captures
+    "zero or more successful iterations of [c]" — the Kleene star, which
+    lets us reason about [CSTAR c] using the lemmas in [Sequences.v]
+    ([star_refl], [star_one], [star_trans], ...). *)
+
+Definition step_iter (c: com) (s s': store) : Prop :=
+  s =[ c ]=> RNormal s'.
+
+Lemma cexec_cstar_of_star:
+  forall c s s', star (step_iter c) s s' -> s =[ CSTAR c ]=> RNormal s'.
+Proof.
+  induction 1.
+  - apply cexec_cstar_done.
+  - eapply cexec_cstar_step_ok; eauto.
+Qed.
+
+Lemma star_of_cexec_cstar:
+  forall c s r,
+    s =[ CSTAR c ]=> r ->
+    forall s', r = RNormal s' -> star (step_iter c) s s'.
+Proof.
+  intros c s r H. dependent induction H; intros s0 EQ; try discriminate.
+  - inversion EQ; subst. apply star_refl.
+  - inversion EQ; subst. eapply star_step; [ exact H | eauto ].
+Qed.
+
+Theorem cexec_cstar_iff_star:
+  forall c s s',
+    s =[ CSTAR c ]=> RNormal s' <-> star (step_iter c) s s'.
+Proof.
+  intros c s s'. split.
+  - intro H. eapply star_of_cexec_cstar; eauto.
+  - apply cexec_cstar_of_star.
+Qed.
+
+(** Erroring execution of [CSTAR c]: some number of successful iterations
+    followed by a body that errors. *)
+Lemma cexec_cstar_err_to_star:
+  forall c s r,
+    s =[ CSTAR c ]=> r ->
+    r = RError ->
+    exists s', star (step_iter c) s s' /\ s' =[ c ]=> RError.
+Proof.
+  intros c s r H. dependent induction H; intro EQ; try discriminate.
+  - exists s. split; [ apply star_refl | exact H ].
+  - destruct (IHcexec2 c eq_refl EQ) as (sm & STAR & ERR).
+    exists sm. split; [ eapply star_step; eauto | exact ERR ].
+Qed.
+
+Theorem cexec_cstar_err_iff:
+  forall c s,
+    s =[ CSTAR c ]=> RError <->
+    exists s', star (step_iter c) s s' /\ s' =[ c ]=> RError.
+Proof.
+  intros c s. split.
+  - intro H. eapply cexec_cstar_err_to_star; eauto.
+  - intros (s' & STAR & ERR). induction STAR.
+    + apply cexec_cstar_step_error. exact ERR.
+    + eapply cexec_cstar_step_iter_error; eauto.
+Qed.
+
+(** ** [step_iter] as a Kleene-algebra homomorphism
+
+    The relation [step_iter] sends program constructors to their
+    corresponding Kleene-algebra operators. These equivalences let us
+    [rewrite] program structure into relational form and apply the laws
+    in [RelKleene.v]. *)
+
+Lemma step_iter_skip:
+  step_iter SKIP ≡ rid.
+Proof.
+  intros s s'. unfold step_iter, rid; split.
+  - intro H. inversion H; subst. reflexivity.
+  - intros ->. apply cexec_skip.
+Qed.
+
+(** [ASSUME b] is the KAT-test [\[b\]] — the partial-identity relation that
+    holds only on states where [b] is true. *)
+Lemma step_iter_assume:
+  forall b s s',
+    step_iter (ASSUME b) s s' <-> s = s' /\ beval b s = true.
+Proof.
+  intros b s s'. unfold step_iter; split.
+  - intro H. inversion H; subst. split; [ reflexivity | assumption ].
+  - intros (-> & HB). apply cexec_assume. exact HB.
+Qed.
+
+Lemma step_iter_seq:
+  forall c1 c2, step_iter (SEQ c1 c2) ≡ step_iter c1 ⨟ step_iter c2.
+Proof.
+  intros c1 c2 s s''. unfold step_iter, rcomp; split.
+  - intro H. inversion H; subst. exists s'. split; assumption.
+  - intros (s' & H1 & H2). eapply cexec_seq; eauto.
+Qed.
+
+Lemma step_iter_choice:
+  forall c1 c2 s s',
+    step_iter (CHOICE c1 c2) s s' <->
+    step_iter c1 s s' \/ step_iter c2 s s'.
+Proof.
+  intros c1 c2 s s'. unfold step_iter; split.
+  - intro H. inversion H; subst.
+    + left. assumption.
+    + right. assumption.
+  - intros [H | H].
+    + apply cexec_choice_left. assumption.
+    + apply cexec_choice_right. assumption.
+Qed.
+
+Lemma step_iter_cstar:
+  forall c, step_iter (CSTAR c) ≡ star (step_iter c).
+Proof.
+  intros c s s'. unfold step_iter. apply cexec_cstar_iff_star.
+Qed.
+
+(** [CSTAR c ;; c] and [c ;; CSTAR c] are semantically equivalent: the
+    classical Kleene-algebra identity [R* · R = R · R*]. *)
+Lemma cstar_seq_comm:
+  forall c, step_iter ((CSTAR c) ;; c) ≡ step_iter (c ;; (CSTAR c)).
+Proof.
+  intro c.
+  rewrite !step_iter_seq, !step_iter_cstar.
+  symmetry. apply rcomp_star_shift.
+Qed.
 
 (** We now show an equivalence between evaluations that terminate according
     to the natural semantics
@@ -463,14 +552,10 @@ Proof.
     exists (SKIP, update x n s). split.
     + apply star_one. apply red_nondet.
     + apply final_skip.
-  - (* ASSUME true *)
+  - (* ASSUME *)
     exists (SKIP, s). split.
-     + apply star_one. apply red_assume_true. (*exact H. *)
+    + apply star_one. apply red_assume. assumption.
     + apply final_skip.
-   (*-  ASSUME false *)
-    (* exists (ERROR, s). split.
-    + apply star_one. apply red_assume_false. exact H.
-    + apply final_error. *)
   - (* SEQ normal *)
     destruct IHcexec1 as (cs1 & STAR1 & FINAL1).
     inversion FINAL1; subst cs1.
@@ -527,7 +612,7 @@ Proof.
         -- apply red_seq_steps with (c2 := CSTAR c) in STAR1. exact STAR1.
         -- eapply star_step. apply red_seq_done. subst. exact STAR2.
     + exact FINAL2.
-  - (* CSTAR step error *)
+  - (* CSTAR step error (body errors immediately) *)
     destruct IHcexec as (cs1 & STAR1 & FINAL1).
     inversion FINAL1; subst cs1.
     exists (ERROR, s0). split.
@@ -536,6 +621,18 @@ Proof.
       * eapply star_trans.
         -- apply red_seq_steps with (c2 := CSTAR c) in STAR1. exact STAR1.
         -- apply star_one. apply red_seq_error.
+    + apply final_error.
+  - (* CSTAR step iter error (body ok, then iteration errors) *)
+    destruct IHcexec1 as (cs1 & STAR1 & FINAL1).
+    inversion FINAL1; subst cs1.
+    destruct IHcexec2 as (cs2 & STAR2 & FINAL2).
+    inversion FINAL2; subst cs2.
+    exists (ERROR, s1). split.
+    + eapply star_trans.
+      * apply star_one. apply red_cstar_step.
+      * eapply star_trans.
+        -- apply red_seq_steps with (c2 := CSTAR c) in STAR1. exact STAR1.
+        -- eapply star_step. apply red_seq_done. subst. exact STAR2.
     + apply final_error.
 Qed.
 
@@ -594,10 +691,8 @@ Proof.
     inversion EXEC; subst. apply cexec_assign.
   - (* red_nondet *)
     inversion EXEC; subst. eapply cexec_nondet.
-  - (* red_assume_true *)
+  - (* red_assume *)
     inversion EXEC; subst. eapply cexec_assume; eauto.
-  (* - red_assume_false *)
-    (* inversion EXEC; subst. eapply cexec_assume_false; eauto. *)
   - (* red_seq_done  *)
     destruct s' as [st'|].
     + apply cexec_seq with s2. apply cexec_skip. exact EXEC.
@@ -631,7 +726,7 @@ Proof.
     + (* error left *)
       eapply cexec_cstar_step_error; eauto.
     + (* error right *)
-      eapply cexec_cstar_step_ok; eauto.
+      eapply cexec_cstar_step_iter_error; eauto.
 Qed.
 
 (** By induction on the reduction sequence, it follows that a command
