@@ -234,10 +234,11 @@ Proof.
   unfold update; intros. destruct (string_dec x y); congruence.
 Qed.
 
-(** The result type indicates the end value of a program, either a state or an error *)
+(** The result type indicates the end value of a program: either a final
+    state on the normal path, or the state at the point of error. *)
 Inductive result : Type :=
 | RNormal : store -> result
-| RError : result.
+| RError  : store -> result.
 
 (** The relation [ red (c, s) (c', s') ] defines a basic reduction,
     that is, the first computation step when executing command [c]
@@ -279,7 +280,7 @@ Inductive final : com * store -> result -> Prop :=
   | final_skip : forall s,
     final (SKIP, s) (RNormal s)
   | final_error : forall s,
-    final (ERROR, s) RError.
+    final (ERROR, s) (RError s).
 
   (** Termination for the small-step semantics that returns a [result]. *)
   Definition terminates_result (s: store) (c: com) (r: result) : Prop :=
@@ -349,7 +350,7 @@ Inductive cexec: store -> com -> result -> Prop :=
   | cexec_skip: forall s,
       s =[ SKIP ]=> RNormal s
   | cexec_error: forall s,
-      s =[ ERROR ]=> RError
+      s =[ ERROR ]=> RError s
   | cexec_assign: forall s x a,
     s =[ ASSIGN x a ]=> RNormal (update x (aeval a s) s)
   | cexec_nondet: forall s x n,
@@ -361,13 +362,13 @@ Inductive cexec: store -> com -> result -> Prop :=
     s  =[ c1 ]=> RNormal s' ->
     s' =[ c2 ]=> RNormal s'' ->
     s  =[ SEQ c1 c2 ]=> RNormal s''
-  | cexec_seq_error: forall c1 c2 s,
-    s  =[ c1 ]=> RError ->
-    s  =[ SEQ c1 c2 ]=> RError
-  | cexec_seq_error_right: forall c1 c2 s s',
+  | cexec_seq_error: forall c1 c2 s sf,
+    s  =[ c1 ]=> RError sf ->
+    s  =[ SEQ c1 c2 ]=> RError sf
+  | cexec_seq_error_right: forall c1 c2 s s' sf,
     s  =[ c1 ]=> RNormal s' ->
-    s' =[ c2 ]=> RError ->
-    s  =[ SEQ c1 c2 ]=> RError
+    s' =[ c2 ]=> RError sf ->
+    s  =[ SEQ c1 c2 ]=> RError sf
   | cexec_choice_left: forall s c1 c2 r,
     s =[ c1 ]=> r ->
     s =[ CHOICE c1 c2 ]=> r
@@ -380,20 +381,20 @@ Inductive cexec: store -> com -> result -> Prop :=
       s  =[ c ]=> RNormal s' ->
       s' =[ CSTAR c ]=> RNormal s'' ->
       s  =[ CSTAR c ]=> RNormal s''
-  | cexec_cstar_step_error : forall c s,
-      s =[ c ]=> RError ->
-      s =[ CSTAR c ]=> RError
-  | cexec_cstar_step_iter_error : forall c s s',
+  | cexec_cstar_step_error : forall c s sf,
+      s =[ c ]=> RError sf ->
+      s =[ CSTAR c ]=> RError sf
+  | cexec_cstar_step_iter_error : forall c s s' sf,
       s  =[ c ]=> RNormal s' ->
-      s' =[ CSTAR c ]=> RError ->
-      s  =[ CSTAR c ]=> RError
+      s' =[ CSTAR c ]=> RError sf ->
+      s  =[ CSTAR c ]=> RError sf
   where "st0 =[ c ]=> st1" := (cexec st0 c st1).
 
 Notation "s1 =[ c ]=> 'ok' ↑ s2" := (cexec s1 c (RNormal s2))
   (at level 40, c at level 99, s2 at level 39).
 
-Notation "s1 =[ c ]=> 'err'" := (cexec s1 c RError)
-  (at level 40, c at level 99).
+Notation "s1 =[ c ]=> 'err' ↑ s2" := (cexec s1 c (RError s2))
+  (at level 40, c at level 99, s2 at level 39).
 
 (** ** Kleene-algebra view of [CSTAR]
 
@@ -438,21 +439,21 @@ Qed.
 Lemma cexec_cstar_err_to_star:
   forall c s r,
     s =[ CSTAR c ]=> r ->
-    r = RError ->
-    exists s', star (step_iter c) s s' /\ s' =[ c ]=> RError.
+    forall sf', r = RError sf' ->
+    exists s', star (step_iter c) s s' /\ s' =[ c ]=> RError sf'.
 Proof.
-  intros c s r H. dependent induction H; intro EQ; try discriminate.
-  - exists s. split; [ apply star_refl | exact H ].
-  - destruct (IHcexec2 c eq_refl EQ) as (sm & STAR & ERR).
+  intros c s r H. dependent induction H; intros sf' EQ; try discriminate.
+  - injection EQ as ->. exists s. split; [ apply star_refl | exact H ].
+  - destruct (IHcexec2 c eq_refl sf' EQ) as (sm & STAR & ERR).
     exists sm. split; [ eapply star_step; eauto | exact ERR ].
 Qed.
 
 Theorem cexec_cstar_err_iff:
-  forall c s,
-    s =[ CSTAR c ]=> RError <->
-    exists s', star (step_iter c) s s' /\ s' =[ c ]=> RError.
+  forall c s sf,
+    s =[ CSTAR c ]=> RError sf <->
+    exists s', star (step_iter c) s s' /\ s' =[ c ]=> RError sf.
 Proof.
-  intros c s. split.
+  intros c s sf. split.
   - intro H. eapply cexec_cstar_err_to_star; eauto.
   - intros (s' & STAR & ERR). induction STAR.
     + apply cexec_cstar_step_error. exact ERR.
@@ -568,24 +569,21 @@ Proof.
     + apply final_skip.
   - (* SEQ error (left) *)
     destruct IHcexec as (cs1 & STAR1 & FINAL1).
-    inversion FINAL1; subst cs1.
-    exists (ERROR, s0). split.
+    inversion FINAL1; subst.
+    exists (ERROR, sf). split.
     + eapply star_trans.
       * apply red_seq_steps with (c2 := c2) in STAR1. exact STAR1.
       * apply star_one. apply red_seq_error.
     + apply final_error.
   - (* SEQ error (right) *)
     destruct IHcexec1 as (cs1 & STAR1 & FINAL1).
-    inversion FINAL1; subst cs1.
+    inversion FINAL1; subst.
     destruct IHcexec2 as (cs2 & STAR2 & FINAL2).
-    inversion FINAL2; subst cs2.
-    exists (ERROR, s1). split.
-    + subst.
-      eapply star_trans.
+    inversion FINAL2; subst.
+    exists (ERROR, sf). split.
+    + eapply star_trans.
       * apply red_seq_steps with (c2 := c2) in STAR1. exact STAR1.
-      * eapply star_step.
-        -- apply red_seq_done.
-        -- exact STAR2.
+      * eapply star_step; [ apply red_seq_done | exact STAR2 ].
     + apply final_error.
   - (* CHOICE left *)
     destruct IHcexec as (cs & STAR & FINAL').
@@ -614,8 +612,8 @@ Proof.
     + exact FINAL2.
   - (* CSTAR step error (body errors immediately) *)
     destruct IHcexec as (cs1 & STAR1 & FINAL1).
-    inversion FINAL1; subst cs1.
-    exists (ERROR, s0). split.
+    inversion FINAL1; subst.
+    exists (ERROR, sf). split.
     + eapply star_trans.
       * apply star_one. apply red_cstar_step.
       * eapply star_trans.
@@ -624,15 +622,15 @@ Proof.
     + apply final_error.
   - (* CSTAR step iter error (body ok, then iteration errors) *)
     destruct IHcexec1 as (cs1 & STAR1 & FINAL1).
-    inversion FINAL1; subst cs1.
+    inversion FINAL1; subst.
     destruct IHcexec2 as (cs2 & STAR2 & FINAL2).
-    inversion FINAL2; subst cs2.
-    exists (ERROR, s1). split.
+    inversion FINAL2; subst.
+    exists (ERROR, sf). split.
     + eapply star_trans.
       * apply star_one. apply red_cstar_step.
       * eapply star_trans.
         -- apply red_seq_steps with (c2 := CSTAR c) in STAR1. exact STAR1.
-        -- eapply star_step. apply red_seq_done. subst. exact STAR2.
+        -- eapply star_step; [ apply red_seq_done | exact STAR2 ].
     + apply final_error.
 Qed.
 
@@ -754,7 +752,7 @@ Qed.
 
 Corollary reds_to_cexec_error:
   forall s c s',
-    star red (c, s) (ERROR, s') -> s =[ c ]=> RError.
+    star red (c, s) (ERROR, s') -> s =[ c ]=> RError s'.
 Proof.
   intros s c s' STAR.
   apply reds_to_cexec.
