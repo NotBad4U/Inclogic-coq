@@ -356,6 +356,55 @@ Lemma triple_assign_fwd: forall x a P,
 Proof.
 Admitted.
 
+Fixpoint modified_by (c: com) (x: ident) : Prop :=
+  match c with
+  | SKIP => False
+  | ASSIGN y a => x = y
+  | ERROR => False
+  | ASSUME b => False
+  | NONDET y => x = y
+  |  c1 ;; c2 => modified_by c1 x \/ modified_by c2 x
+  |  c1 ⊕ c2 => modified_by c1 x \/ modified_by c2 x
+  |  c ★ => modified_by c x
+  end.
+
+Lemma cexec_modified:
+  forall x s1 c s2,
+  cexec s1 c s2 -> ~modified_by c x ->
+  match s2 with
+  | RNormal s => s x = s1 x
+  | RError  s => s x = s1 x
+  end.
+Proof.
+  intros x s1 c s2 EXEC.
+  induction EXEC; intros NMOD; cbn in NMOD;
+    try reflexivity;
+    try (apply update_other; intro; apply NMOD; symmetry; assumption);
+    try (rewrite IHEXEC2, IHEXEC1; tauto);
+    try (apply IHEXEC; tauto).
+Qed.
+
+Definition independent_of (P: assertion) (vars: ident -> Prop) : Prop :=
+  forall s1 s2,
+  (forall x, ~ vars x -> s1 x = s2 x) ->
+  (P s1 <-> P s2).
+
+Lemma triple_frame:
+  forall c P Q R,
+  ⦃⦃ P ⦄⦄ c ⦃⦃ Q ⦄⦄ ->
+  independent_of R (modified_by c) ->
+  ⦃⦃ P //\\ R ⦄⦄ c ⦃⦃ Q //\\ R ⦄⦄.
+Proof.
+  unfold triple, aand, independent_of.
+  intros c P Q R HT INDEP s r EXEC [HPs HRs].
+  destruct (HT s r EXEC HPs) as (s' & -> & HQs').
+  exists s'. split; [ reflexivity | split; [ exact HQs' | ] ].
+  apply (INDEP s s');
+    [ intros x NMOD; symmetry;
+      exact (cexec_modified x s c (RNormal s') EXEC NMOD)
+    | exact HRs ].
+Qed.
+
 (** Strong Hoare triples *)
 Reserved Notation "⦇ P ⦈ c ⦇ Q ⦈" (at level 90, c at next level).
 

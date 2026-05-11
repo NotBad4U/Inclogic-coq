@@ -1,4 +1,4 @@
-From Stdlib Require Import Arith ZArith Psatz Bool String List Program.Equality.
+From Stdlib Require Import Arith ZArith Psatz Bool String List Program.Equality FunctionalExtensionality.
 From IncLogic Require Import Imp Sequences Hoare.
 
 Local Open Scope string_scope.
@@ -235,7 +235,7 @@ Proof.
   replace s' with (update x (aeval a (update x m s')) (update x m s')) at 2.
   - apply cexec_assign.
   - rewrite Heq_a.
-    apply FunctionalExtensionality.functional_extensionality. intro y.
+    extensionality y.
     unfold update. destruct (string_dec x y) as [-> | Hneq].
     + symmetry. exact Heq_x.
     + reflexivity.
@@ -294,6 +294,27 @@ Proof.
         + constructor. exact HB.
     - exfalso. apply HQ.
 Qed.
+
+Lemma inc_triple_constancy: forall P c Q f,
+    ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ Q ⟧⟧ ->
+    independent_of f (modified_by c) ->
+    ⟦⟦ P //\\ f ⟧⟧ c ⟦⟦ ϵ ↑ Q //\\ f ⟧⟧.
+Proof.
+  unfold IncTriple, aand, independent_of.
+  intros P c Q f HT INDEP r HQf.
+  destruct r as [s_out | s_out]; destruct HQf as [HQs HFs].
+  - destruct (HT (RNormal s_out) HQs) as (s & HPs & EXEC).
+    exists s. split; [ split; [ exact HPs | ] | exact EXEC ].
+    apply (proj1 (INDEP s_out s
+      (fun x NMOD => cexec_modified x s c (RNormal s_out) EXEC NMOD))).
+    exact HFs.
+  - destruct (HT (RError s_out) HQs) as (s & HPs & EXEC).
+    exists s. split; [ split; [ exact HPs | ] | exact EXEC ].
+    apply (proj1 (INDEP s_out s
+      (fun x NMOD => cexec_modified x s c (RError s_out) EXEC NMOD))).
+    exact HFs.
+Qed.
+
 
 Module IncSoundness.
 
