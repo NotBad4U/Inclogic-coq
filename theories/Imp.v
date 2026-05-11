@@ -149,9 +149,9 @@ Infix ";;" := SEQ (at level 80, right associativity): com_scope.
 
 Notation "c1 '⊕' c2" := (CHOICE c1 c2)
                          (at level 85, right associativity): com_scope.
-
+(* 
 Notation "c '★'" := (CSTAR c)
-                         (in custom com at level 90, right associativity).
+                         (in custom com at level 90, right associativity). *)
 
 Notation "c '★'" := (CSTAR c)
                          (at level 90, right associativity) : com_scope.

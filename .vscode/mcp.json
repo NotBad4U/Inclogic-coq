@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "rocq-mcp": {
+      "command": "rocq-mcp",
+      "env": {
+        "ROCQ_WORKSPACE": "/Users/alessiocoltellacci/.local/bin/rocq-mcp"
+      }
+    }
+  }
+}

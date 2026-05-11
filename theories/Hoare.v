@@ -345,6 +345,17 @@ Proof.
   exists s'. split; [ exact EQ | apply QQ', QSx ].
 Qed.
 
+Definition aexists {A: Type} (P: A -> assertion) : assertion :=
+  fun (s: store) => exists (a: A), P a s.
+
+Lemma triple_assign_fwd: forall x a P,
+  ⦃⦃ P ⦄⦄
+  ASSIGN x a 
+  ⦃⦃ aexists (fun m => aexists (fun n =>
+     aequal (VAR x) n //\\ aupdate x (CONST m) (P //\\ aequal a n))) ⦄⦄.
+Proof.
+Admitted.
+
 (** Strong Hoare triples *)
 Reserved Notation "⦇ P ⦈ c ⦇ Q ⦈" (at level 90, c at next level).
 
@@ -387,6 +398,8 @@ where "⦇ P ⦈ c ⦇ Q ⦈" :=
                           | RNormal s => Q s
                           | RError _ => False
                           end)).
+
+
 
 
 Definition Triple (P: assertion) (c: com) (Q: assertion) :=
@@ -516,7 +529,20 @@ Proof.
 Qed.
 
 Module Soundness.
-  (* TODO *) 
+  
+  Theorem triple_soundness: forall P c Q,
+    ⦃ P ⦄ c ⦃ Q ⦄ ->
+    ⦃⦃ P ⦄⦄ c ⦃⦃ Q ⦄⦄.
+  Proof.
+  Admitted.
+
+
+  Theorem Triple_soundness: forall P c Q,
+    ⦇ P ⦈ c ⦇ Q ⦈ ->
+    ⦇⦇ P ⦈⦈ c ⦇⦇ Q ⦈⦈.
+  Proof.
+  Admitted.
+
 End Soundness.
 
 Module Completness.
