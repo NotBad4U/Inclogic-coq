@@ -586,6 +586,91 @@ Module Soundness.
   Admitted.
 
 
+  (** Helper: a strong syntactic Hoare derivation is sound for partial
+    correctness — every execution from a [P]-state lands in a result
+    satisfying [Q].  Proved by induction on the derivation. *)
+  Local Lemma Strong_partial_correctness: forall P c Q,
+    StrongHoareRes P c Q ->
+    forall s r, cexec s c r -> P s -> Q r.
+  Proof.
+    intros P c Q HSH.
+    induction HSH as [
+        P
+      | P x a
+      | P Q R c1 c2 HSH1 IH1 HSH2 IH2
+      | P c1 c2 HSH IH
+      | P Q P' Q' c HSH IH HP'P HQQ'
+      | P Q c1 c2 HSH1 IH1 HSH2 IH2
+      | INV cb a Hbody IHbody
+    ]; intros sx r EXEC HP.
+    - (* HOARE_skip_r *)
+      inversion EXEC; subst. cbn. exact HP.
+    - (* HOARE_assign_r *)
+      inversion EXEC; subst. cbn. exact HP.
+    - (* HOARE_seq_ok *)
+      apply cexec_seq_inv in EXEC.
+      destruct EXEC as
+        [ (sm & sf & H1' & H2' & ->)
+        | [ (sf & H1' & ->) | (sm & sf & H1' & H2' & ->) ] ].
+      + specialize (IH1 sx (RNormal sm) H1' HP). cbn in IH1.
+        specialize (IH2 sm (RNormal sf) H2' IH1). exact IH2.
+      + specialize (IH1 sx (RError sf) H1' HP). cbn in IH1. exfalso. exact IH1.
+      + specialize (IH1 sx (RNormal sm) H1' HP). cbn in IH1.
+        specialize (IH2 sm (RError sf) H2' IH1). exact IH2.
+    - (* HOARE_seq_err *)
+      apply cexec_seq_inv in EXEC.
+      destruct EXEC as
+        [ (sm & sf & H1' & H2' & ->)
+        | [ (sf & H1' & ->) | (sm & sf & H1' & H2' & ->) ] ].
+      + specialize (IH sx (RNormal sm) H1' HP). cbn in IH. exfalso. exact IH.
+      + specialize (IH sx (RError sf) H1' HP). exact IH.
+      + specialize (IH sx (RNormal sm) H1' HP). cbn in IH. exfalso. exact IH.
+    - (* HOARE_consequence_res *)
+      apply HP'P in HP.
+      specialize (IH sx r EXEC HP).
+      destruct r as [s' | s']; cbn in IH |- *.
+      + apply HQQ'. exact IH.
+      + exact IH.
+    - (* HOARE_choice_res *)
+      inversion EXEC; subst.
+      + eapply IH1; eassumption.
+      + eapply IH2; eassumption.
+    - (* HOARE_cstar_ress *)
+      destruct r as [s' | s'].
+      + (* RNormal: induct on the [star (step_iter cb)] chain *)
+        apply cexec_cstar_iff_star in EXEC. cbn.
+        revert HP. induction EXEC as [|x y z STEP STAR IHSTAR]; intros HP.
+        * exact HP.
+        * apply IHSTAR. unfold step_iter in STEP.
+          specialize (IHbody (aeval a x) x (RNormal y) STEP (conj HP eq_refl)).
+          cbn in IHbody. destruct IHbody as [_ HINV_y]. exact HINV_y.
+      + (* RError: same chain up to the erroring iteration *)
+        apply cexec_cstar_err_iff in EXEC.
+        destruct EXEC as (sm & STAR & ERR).
+        assert (HINV_sm : INV sm).
+        { clear ERR. revert HP.
+          induction STAR as [|x y z STEP STAR' IHSTAR']; intros HP.
+          - exact HP.
+          - apply IHSTAR'. unfold step_iter in STEP.
+            specialize (IHbody (aeval a x) x (RNormal y) STEP (conj HP eq_refl)).
+            cbn in IHbody. destruct IHbody as [_ HINV_y]. exact HINV_y. }
+        specialize (IHbody (aeval a sm) sm (RError s') ERR
+                          (conj HINV_sm eq_refl)).
+        cbn in IHbody. exact IHbody.
+  Qed.
+
+  Lemma Triple_partial_soundness: forall P c Q,
+    ⦇ P ⦈ c ⦇ Q ⦈ ->
+    ⦃⦃ P ⦄⦄ c ⦃⦃ Q ⦄⦄.
+  Proof.
+    unfold triple. intros P c Q HSH s r EXEC HP.
+    pose proof (Strong_partial_correctness _ _ _ HSH s r EXEC HP) as HQ.
+    destruct r as [s' | s']; cbn in HQ.
+    - exists s'. split; [ reflexivity | exact HQ ].
+    - exfalso. exact HQ.
+  Qed.
+
+
   Theorem Triple_soundness: forall P c Q,
     ⦇ P ⦈ c ⦇ Q ⦈ ->
     ⦇⦇ P ⦈⦈ c ⦇⦇ Q ⦈⦈.

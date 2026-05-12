@@ -325,12 +325,13 @@ Definition cexec_indep (c: com) (x: ident) : Prop :=
          | RError  s' => RError  (update x v s')
          end).
 
-(** Substitution I (IL.pdf):
-      [p] c [ε: q]
-      ————————————————————————————————
-      [p[e/x]] c [ε: q[e/x]]
-    side conditions: c is x-invariant, [e]'s value is preserved by c's
-    modifications, and x is not free in e. *)
+(** Substitution I:
+            [p] c [ε: q]
+    ———————————————————————————————— 
+        [p[e/x]] c [ε: q[e/x]]
+ side conditions: c is x-invariant, [e]'s value is preserved by c's
+ modifications, and x is not free in e.
+*)
 Lemma inc_triple_subst_I: forall x e c P Q,
   ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ Q ⟧⟧ ->
   ~ modified_by c x ->
@@ -420,6 +421,67 @@ Proof.
     exact HFs.
 Qed.
 
+(* Derived Unrolling Rule *)
+
+Fixpoint cmd_n (i: nat) c : com :=
+  match i with
+  | 0%nat => SKIP
+  | S n => c ;; cmd_n n c
+  end.
+
+(** A finite unrolling [cmd_n i c] is a refinement of [CSTAR c]: every
+    execution of the unrolled form is an execution of the iteration.  Proven
+    by induction on [i]. *)
+Lemma cmd_n_to_cstar: forall i c s r,
+  cexec s (cmd_n i c) r -> cexec s (CSTAR c) r.
+Proof.
+  induction i as [|n IH]; intros c s r EXEC; cbn in EXEC.
+  - inversion EXEC; subst. apply cexec_cstar_done.
+  - apply cexec_seq_inv in EXEC.
+    destruct EXEC as
+      [ (sm & sf & H1 & H2 & ->)
+      | [ (sf & H1 & ->) | (sm & sf & H1 & H2 & ->) ] ].
+    + apply (IH c sm (RNormal sf)) in H2.
+      eapply cexec_cstar_step_ok; eauto.
+    + eapply cexec_cstar_step_error; eauto.
+    + apply (IH c sm (RError sf)) in H2.
+      eapply cexec_cstar_step_iter_error; eauto.
+Qed.
+
+Lemma inc_triple_derived_unrolling: forall P c (postassert_i: nat -> assertion),
+    (forall i, ⟦⟦ P ⟧⟧ (cmd_n i c) ⟦⟦ ϵ ↑ postassert_i i ⟧⟧) ->
+    ⟦⟦ P ⟧⟧ c ★ ⟦⟦ ϵ ↑ aexists (fun i => postassert_i i) ⟧⟧.
+Proof.
+  intros P c postassert_i H r HQ.
+  destruct r as [s' | s']; cbn in HQ; destruct HQ as [j Hj].
+  - destruct (H j (RNormal s') Hj) as (s & HPs & EXEC).
+    exists s. split; [ exact HPs | apply cmd_n_to_cstar in EXEC; exact EXEC ].
+  - destruct (H j (RError s') Hj) as (s & HPs & EXEC).
+    exists s. split; [ exact HPs | apply cmd_n_to_cstar in EXEC; exact EXEC ].
+Qed.
+
+Module SPre.
+
+(* Derived Rule of Choice *)
+
+Lemma inc_triple_derived_choice: forall P c1 c2 Q1 Q2,
+    ⟦⟦ P ⟧⟧ c1 ⟦⟦ ϵ ↑ Q1 ⟧⟧ ->
+    ⟦⟦ P ⟧⟧ c2 ⟦⟦ ϵ ↑ Q2 ⟧⟧ ->
+    ⟦⟦ P ⟧⟧ (c1 ⊕ c2) ⟦⟦ ϵ ↑ Q1 \\// Q2 ⟧⟧.
+Proof.
+  intros P c1 c2 Q1 Q2 H1 H2.
+  apply inc_triple_choice_l with (c2 := c2) in H1.
+  apply inc_triple_choice_r with (c1 := c1) in H2.
+  intros r HQ.
+  destruct r as [s | s]; destruct HQ as [HQ1 | HQ2].
+  - apply (H1 (RNormal s) HQ1).
+  - apply (H2 (RNormal s) HQ2).
+  - apply (H1 (RError s) HQ1).
+  - apply (H2 (RError s) HQ2).
+Qed.
+
+End SPre.
+
 
 Module IncSoundness.
 
@@ -440,6 +502,23 @@ Proof.
   intros U c U' O O' HIL HUO HHO s' HUs'.
   apply Inc_triple_sound in HIL.
   apply Soundness.triple_soundness in HHO.
+  destruct (HIL (RNormal s') HUs') as (s & HUs & HEX).
+  apply HUO in HUs.
+  destruct (HHO s (RNormal s') HEX HUs) as (s'' & EQ & HO').
+  inversion EQ; subst. exact HO'.
+Qed.
+
+
+(* Principle of Agreement for strong hoare triples *)
+Lemma agreement_Triple: forall U c U' O O',
+    ⟦ U ⟧ c ⟦ ϵ ↑ U' ⟧ ->
+    U -->> O ->
+    ⦇ O ⦈ c ⦇ O' ⦈  ->
+    U' -->> O'.
+Proof.
+  intros U c U' O O' HIL HUO HHO s' HUs'.
+  apply Inc_triple_sound in HIL.
+  apply Soundness.Triple_partial_soundness in HHO.
   destruct (HIL (RNormal s') HUs') as (s & HUs & HEX).
   apply HUO in HUs.
   destruct (HHO s (RNormal s') HEX HUs) as (s'' & EQ & HO').
