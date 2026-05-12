@@ -295,6 +295,111 @@ Proof.
     - exfalso. apply HQ.
 Qed.
 
+(** Syntactic substitution [e/x] on arithmetic expressions. *)
+Fixpoint asubst (x: ident) (e: aexp) (a: aexp) : aexp :=
+  match a with
+  | CONST n     => CONST n
+  | VAR y       => if string_dec x y then e else VAR y
+  | PLUS  a1 a2 => PLUS  (asubst x e a1) (asubst x e a2)
+  | MINUS a1 a2 => MINUS (asubst x e a1) (asubst x e a2)
+  end.
+
+(** "Variable [x] is not free in [P]." *)
+Definition not_free (x: ident) (P: assertion) : Prop :=
+  independent_of P (fun y => y = x).
+
+(** "Free([e]) ∩ vars = ∅". *)
+Definition aexp_indep (e: aexp) (vars: ident -> Prop) : Prop :=
+  forall s1 s2, (forall y, ~ vars y -> s1 y = s2 y) -> aeval e s1 = aeval e s2.
+
+(** "c's trajectory is invariant under changes to x":
+    every cexec from s can be shifted to a cexec from (update x v s) ending
+    in the corresponding x-shifted result. Implies x ∉ mod(c) and that c
+    does not read x. *)
+Definition cexec_indep (c: com) (x: ident) : Prop :=
+  forall s v r,
+  cexec s c r ->
+  cexec (update x v s) c
+        (match r with
+         | RNormal s' => RNormal (update x v s')
+         | RError  s' => RError  (update x v s')
+         end).
+
+(** Substitution I (IL.pdf):
+      [p] c [ε: q]
+      ————————————————————————————————
+      [p[e/x]] c [ε: q[e/x]]
+    side conditions: c is x-invariant, [e]'s value is preserved by c's
+    modifications, and x is not free in e. *)
+Lemma inc_triple_subst_I: forall x e c P Q,
+  ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ Q ⟧⟧ ->
+  ~ modified_by c x ->
+  cexec_indep c x ->
+  aexp_indep e (modified_by c) ->
+  ⟦⟦ aupdate x e P ⟧⟧ c ⟦⟦ ϵ ↑ aupdate x e Q ⟧⟧.
+Proof.
+  unfold IncTriple, aupdate, aexp_indep, cexec_indep.
+  intros x e c P Q HT NMOD IND EDEP r HQex.
+  destruct r as [s_out | s_out].
+  - set (v := aeval e s_out) in *.
+    destruct (HT (RNormal (update x v s_out)) HQex) as (s_in & HPs_in & EXEC_in).
+    exists (update x (s_out x) s_in).
+    assert (Hsx : s_in x = v).
+    { pose proof (cexec_modified x s_in c _ EXEC_in NMOD) as MOD.
+      cbn in MOD. rewrite <- MOD. apply update_same. }
+    assert (Heval : aeval e (update x (s_out x) s_in) = v).
+    { apply EDEP. intros y NM. unfold update.
+      destruct (string_dec x y) as [-> | Hxy]; [ reflexivity | ].
+      pose proof (cexec_modified y s_in c _ EXEC_in NM) as MODy.
+      cbn in MODy. rewrite <- MODy. unfold update.
+      destruct (string_dec x y); congruence. }
+    assert (Heq_out : update x (s_out x) (update x v s_out) = s_out).
+    { unfold update; extensionality y;
+      destruct (string_dec x y) as [-> | _]; reflexivity. }
+    split.
+    + rewrite Heval.
+      replace (update x v (update x (s_out x) s_in)) with s_in; [ exact HPs_in | ].
+      unfold update. extensionality y. destruct (string_dec x y) as [-> | _].
+      * exact Hsx.
+      * reflexivity.
+    + pose proof (IND s_in (s_out x) _ EXEC_in) as STEP. cbn in STEP.
+      rewrite Heq_out in STEP. exact STEP.
+  - set (v := aeval e s_out) in *.
+    destruct (HT (RError (update x v s_out)) HQex) as (s_in & HPs_in & EXEC_in).
+    exists (update x (s_out x) s_in).
+    assert (Hsx : s_in x = v).
+    { pose proof (cexec_modified x s_in c _ EXEC_in NMOD) as MOD.
+      cbn in MOD. rewrite <- MOD. apply update_same. }
+    assert (Heval : aeval e (update x (s_out x) s_in) = v).
+    { apply EDEP. intros y NM. unfold update.
+      destruct (string_dec x y) as [-> | Hxy]; [ reflexivity | ].
+      pose proof (cexec_modified y s_in c _ EXEC_in NM) as MODy.
+      cbn in MODy. rewrite <- MODy. unfold update.
+      destruct (string_dec x y); congruence. }
+    assert (Heq_out : update x (s_out x) (update x v s_out) = s_out).
+    { unfold update; extensionality y;
+      destruct (string_dec x y) as [-> | _]; reflexivity. }
+    split.
+    + rewrite Heval.
+      replace (update x v (update x (s_out x) s_in)) with s_in; [ exact HPs_in | ].
+      unfold update. extensionality y. destruct (string_dec x y) as [-> | _].
+      * exact Hsx.
+      * reflexivity.
+    + pose proof (IND s_in (s_out x) _ EXEC_in) as STEP. cbn in STEP.
+      rewrite Heq_out in STEP. exact STEP.
+Qed.
+
+(** Substitution II (IL.pdf): renaming with a fresh variable [y]. *)
+Lemma inc_triple_subst_II: forall x y c P Q,
+  x <> y ->
+  ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ Q ⟧⟧ ->
+  not_free y P ->
+  not_free y Q ->
+  cexec_indep c y ->
+  ⟦⟦ aupdate x (VAR y) P ⟧⟧ c ⟦⟦ ϵ ↑ aupdate x (VAR y) Q ⟧⟧.
+Proof.
+Admitted.
+
 Lemma inc_triple_constancy: forall P c Q f,
     ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ Q ⟧⟧ ->
     independent_of f (modified_by c) ->
