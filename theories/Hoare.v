@@ -345,6 +345,9 @@ Proof.
   exists s'. split; [ exact EQ | apply QQ', QSx ].
 Qed.
 
+Definition aforall {A: Type} (P: A -> assertion) : assertion :=
+  fun (s: store) => forall (a: A), P a s.
+
 Definition aexists {A: Type} (P: A -> assertion) : assertion :=
   fun (s: store) => exists (a: A), P a s.
 

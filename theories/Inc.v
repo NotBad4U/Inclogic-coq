@@ -538,3 +538,118 @@ Proof.
 Qed.
 
 End IncSoundness.
+
+Module StrongestLiberalPostcondition.
+
+  Notation "⟦⟦ P ⟧⟧ c ⟦⟦ Q ⟧⟧" := (IncTriple P c Q) (at level 90, c at next level).
+
+  (* Strongest Liberal Postcondition for normal executions *)
+  Fixpoint slp_ok (P: assertion) (c: com) : assertion :=
+  match c with
+  | SKIP => P
+  | ERROR => ffalse
+  | ASSUME b => atrue b //\\ P
+  | ASSIGN x a => aexists (fun (m: Z) => aexists (fun (n: Z) =>
+      aequal (VAR x) n //\\ aupdate x (CONST m) (P //\\ aequal a n)))
+  | NONDET x => aforall (fun (m: aexp) => aupdate x m P)
+  | c1 ⊕ c2 => slp_ok P c1 \\// slp_ok P c2
+  | c1 ;; c2 => slp_ok (slp_ok P c1) c2
+  | CSTAR c => ffalse (* FIXME: Change IMP so that Cstar can carry invariant  *)
+  end.
+
+  (* Strongest Liberal Postcondition for error executions *)
+  Fixpoint slp_err (P: assertion) (c: com) : assertion :=
+  match c with
+  | SKIP => ffalse
+  | ERROR => P
+  | ASSUME b => ffalse
+  | ASSIGN x a => ffalse
+  | NONDET x => ffalse
+  | c1 ⊕ c2 => slp_err P c1 \\// slp_err P c2
+  | c1 ;; c2 => slp_err P c1 \\// slp_err (slp_ok P c1) c2
+  | CSTAR c => ffalse (* FIXME: Change IMP so that Cstar can carry invariant  *)
+  end.
+
+  Lemma slp_ok_correct: forall P c,
+    ⟦⟦ P ⟧⟧ c ⟦⟦ ok ↑ slp_ok P c ⟧⟧.
+  Proof.
+    intros P c. revert P.
+    induction c; intros P r HQ; cbn [slp_ok] in HQ.
+    - (* SKIP *) destruct r as [s|s]; [|contradiction].
+      exists s. split; [exact HQ | apply cexec_skip].
+    - (* ERROR *) destruct r as [s|s]; contradiction.
+    - (* ASSIGN x a *) destruct r as [s|s]; [|contradiction].
+      destruct HQ as [m [n [Heq_x [HP Heq_a]]]].
+      cbn in HP, Heq_a, Heq_x.
+      unfold aequal in Heq_x, Heq_a. cbn in Heq_x, Heq_a.
+      exists (update x m s). split; [ exact HP | ].
+      replace s with (update x (aeval a (update x m s)) (update x m s)) at 2.
+      + apply cexec_assign.
+      + rewrite Heq_a. extensionality y.
+        unfold update. destruct (string_dec x y) as [-> | Hneq].
+        * symmetry. exact Heq_x.
+        * reflexivity.
+    - (* NONDET x *) destruct r as [s|s]; [|contradiction].
+      exists (update x 0 s). split.
+      + apply (HQ (CONST 0)).
+      + replace s with (update x (s x) (update x 0 s)) at 2.
+        * apply cexec_nondet.
+        * unfold update. extensionality y.
+          destruct (string_dec x y) as [-> | _]; reflexivity.
+    - (* ASSUME b *) destruct r as [s|s]; [|contradiction].
+      destruct HQ as [Hb HP].
+      exists s. split; [exact HP | apply cexec_assume; exact Hb].
+    - (* SEQ c1 c2 *) destruct r as [s|s]; [|contradiction].
+      destruct (IHc2 (slp_ok P c1) (RNormal s) HQ) as (s_mid & HQmid & EXEC2).
+      destruct (IHc1 P (RNormal s_mid) HQmid) as (s_pre & HPpre & EXEC1).
+      exists s_pre. split; [ exact HPpre | eapply cexec_seq; eauto ].
+    - (* CHOICE c1 c2 *) destruct r as [s|s]; [|contradiction].
+      destruct HQ as [H1 | H2].
+      + destruct (IHc1 P (RNormal s) H1) as (s0 & HP & EXEC).
+        exists s0. split; [ exact HP | apply cexec_choice_left; exact EXEC ].
+      + destruct (IHc2 P (RNormal s) H2) as (s0 & HP & EXEC).
+        exists s0. split; [ exact HP | apply cexec_choice_right; exact EXEC ].
+    - (* CSTAR c *) destruct r as [s|s]; contradiction.
+  Qed.
+
+  Lemma slp_err_correct: forall P c,
+    ⟦⟦ P ⟧⟧ c ⟦⟦ err ↑ slp_err P c ⟧⟧.
+  Proof.
+    intros P c. revert P.
+    induction c; intros P r HQ; cbn [slp_err] in HQ.
+    - (* SKIP *) destruct r as [s|s]; contradiction.
+    - (* ERROR *) destruct r as [s|s]; [contradiction|].
+      exists s. split; [exact HQ | apply cexec_error].
+    - (* ASSIGN *) destruct r as [s|s]; contradiction.
+    - (* NONDET *) destruct r as [s|s]; contradiction.
+    - (* ASSUME *) destruct r as [s|s]; contradiction.
+    - (* SEQ c1 c2 *) destruct r as [s|s]; [contradiction|].
+      destruct HQ as [H1 | H2].
+      + destruct (IHc1 P (RError s) H1) as (s_pre & HP & EXEC1).
+        exists s_pre. split; [exact HP | apply cexec_seq_error; exact EXEC1].
+      + destruct (IHc2 (slp_ok P c1) (RError s) H2) as (s_mid & HQmid & EXEC2).
+        destruct (slp_ok_correct P c1 (RNormal s_mid) HQmid) as (s_pre & HP & EXEC1).
+        exists s_pre. split; [exact HP | eapply cexec_seq_error_right; eauto].
+    - (* CHOICE c1 c2 *) destruct r as [s|s]; [contradiction|].
+      destruct HQ as [H1 | H2].
+      + destruct (IHc1 P (RError s) H1) as (s0 & HP & EXEC).
+        exists s0. split; [exact HP | apply cexec_choice_left; exact EXEC].
+      + destruct (IHc2 P (RError s) H2) as (s0 & HP & EXEC).
+        exists s0. split; [exact HP | apply cexec_choice_right; exact EXEC].
+    - (* CSTAR c *) destruct r as [s|s]; contradiction.
+  Qed.
+
+  Theorem slp_correct: forall P c,
+    let Q : postassertion := fun r => match r with
+                                      | RNormal s => slp_ok  P c s
+                                      | RError  s => slp_err P c s
+                                      end in
+    ⟦⟦ P ⟧⟧ c ⟦⟦  Q ⟧⟧.
+  Proof.
+    intros P c Q r HQ. subst Q. cbn in HQ.
+    destruct r as [s | s].
+    - apply (slp_ok_correct  P c (RNormal s) HQ).
+    - apply (slp_err_correct P c (RError s) HQ).
+  Qed.
+
+End StrongestLiberalPostcondition.
