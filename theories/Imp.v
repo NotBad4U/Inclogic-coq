@@ -1,10 +1,46 @@
-From Stdlib Require Import Arith ZArith Psatz Bool String List Program.Equality.
+From Stdlib Require Import Arith ZArith Psatz Bool String Ascii List Program.Equality.
 From Stdlib Require Import RelationClasses Morphisms Setoid.
 From IncLogic Require Import Sequences RelKleene.
+From HB Require Import structures.
+From mathcomp Require Import ssrfun ssrbool eqtype choice.
+From mathcomp Require Import finmap.
 
 Local Open Scope string_scope.
 Local Open Scope Z_scope.
 Local Open Scope list_scope.
+
+(** * 0.  [Choice]/[Countable] instances for [ascii] and [string]
+
+    Required so that [{fmap string -> Z}] is a well-typed finite map. *)
+
+Definition ascii_eqb (a b : ascii) : bool :=
+  if ascii_dec a b then true else false.
+Lemma ascii_eqbP : Equality.axiom ascii_eqb.
+Proof.
+  intros a b. unfold ascii_eqb.
+  destruct (ascii_dec a b) as [E|N].
+  - apply ReflectT, E.
+  - apply ReflectF, N.
+Qed.
+HB.instance Definition _ := hasDecEq.Build ascii ascii_eqbP.
+Lemma ascii_pickleK : pcancel nat_of_ascii (fun n => Some (ascii_of_nat n)).
+Proof. intro a. rewrite ascii_nat_embedding. reflexivity. Qed.
+HB.instance Definition _ := PCanHasChoice ascii_pickleK.
+HB.instance Definition _ := PCanIsCountable ascii_pickleK.
+
+Definition string_eqb (s1 s2 : string) : bool :=
+  match string_dec s1 s2 with left _ => true | right _ => false end.
+Lemma string_eqbP : Equality.axiom string_eqb.
+Proof.
+  intros s1 s2. unfold string_eqb.
+  destruct (string_dec s1 s2) as [E|N]; [left|right]; assumption.
+Qed.
+HB.instance Definition _ := hasDecEq.Build string string_eqbP.
+Lemma string_pickleK :
+  pcancel list_ascii_of_string (fun l => Some (string_of_list_ascii l)).
+Proof. intro s. rewrite string_of_list_ascii_of_string. reflexivity. Qed.
+HB.instance Definition _ := PCanHasChoice string_pickleK.
+HB.instance Definition _ := PCanIsCountable string_pickleK.
 
 (** * 1.  The IMP language *)
 
@@ -20,7 +56,9 @@ Inductive aexp : Type :=
   | PLUS (a1: aexp) (a2: aexp)         (**r a sum of two expressions, or *)
   | MINUS (a1: aexp) (a2: aexp).       (**r a difference of two expressions *)
 
-Definition store : Type := ident -> Z.
+Definition store : Type := {fmap ident -> Z}.
+Definition sget (s: store) (x: ident) : Z := odflt 0%Z s.[? x]%fmap.
+Coercion sget : store >-> Funclass.
 
 Fixpoint aeval (a: aexp) (s: store) : Z :=
   match a with
@@ -30,11 +68,7 @@ Fixpoint aeval (a: aexp) (s: store) : Z :=
   | MINUS a1 a2 => aeval a1 s - aeval a2 s
   end.
 
-Eval compute in (aeval (PLUS (VAR "x") (MINUS (VAR "x") (CONST 1)))  (fun x => 2)).
-
-Eval cbn in (aeval (PLUS (VAR "x") (MINUS (CONST 10) (CONST 1)))) (fun x => 2).
-
-(** Result: [ = fun s : store => s "x" + 9 ]. *)
+(** Unmapped variables read as [0%Z] under [sget]. *)
 
 (** We can prove mathematical properties of a given expression. *)
 
@@ -58,7 +92,7 @@ Fixpoint free_in_aexp (x: ident) (a: aexp) : Prop :=
   end.
 
 Theorem aeval_free:
-  forall s1 s2 a,
+  forall (s1 s2 : store) a,
   (forall x, free_in_aexp x a -> s1 x = s2 x) ->
   aeval a s1 = aeval a s2.
 Proof.
@@ -68,9 +102,9 @@ Proof.
 - (* Case a = VAR x *)
   apply SAMEFREE. auto.
 - (* Case a = PLUS a1 a2 *)
-  rewrite IHa1, IHa2; auto.
+  f_equal; [apply IHa1 | apply IHa2]; intros; apply SAMEFREE; auto.
 - (* Case a = MINUS a1 a2 *)
-  rewrite IHa1, IHa2; auto.
+  f_equal; [apply IHa1 | apply IHa2]; intros; apply SAMEFREE; auto.
 Qed.
 
 Definition OPP (a: aexp) : aexp := MINUS (CONST 0) a.
@@ -222,16 +256,42 @@ Definition Under_approximating_ex: com :=
     all variables other than [x]. *)
 
 Definition update (x: ident) (v: Z) (s: store) : store :=
-  fun y => if string_dec x y then v else s y.
+  s.[x <- v]%fmap.
 
 Lemma update_same: forall x v s, (update x v s) x = v.
 Proof.
-  unfold update; intros. destruct (string_dec x x); congruence.
+  intros x v s. unfold update, sget. rewrite fnd_set, eqxx. reflexivity.
 Qed.
 
 Lemma update_other: forall x v s y, x <> y -> (update x v s) y = s y.
 Proof.
-  unfold update; intros. destruct (string_dec x y); congruence.
+  intros x v s y Hxy. unfold update, sget. rewrite fnd_set.
+  rewrite (@ssrbool.ifF _ ((y == x)%bool) _ _).
+  - reflexivity.
+  - apply (@ssrbool.introF _ ((y == x)%bool) (@eqP _ _ _)).
+    intros Heq. apply Hxy. apply Logic.eq_sym. exact Heq.
+Qed.
+
+Lemma update_shadow: forall x m n s, update x n (update x m s) = update x n s.
+Proof.
+  intros x m n s. unfold update. rewrite finmap.setfC. rewrite eqxx. reflexivity.
+Qed.
+
+Lemma update_get: forall x (s: store), x \in domf s -> update x (s x) s = s.
+Proof.
+  intros x s Hin. unfold update.
+  apply fmapP. intro k. rewrite fnd_set.
+  destruct ((k == x)%bool) eqn:E.
+  - assert (Hk : k = x).
+    { generalize (@eqP _ k x). rewrite E. intro H. inversion H. assumption. }
+    rewrite Hk.
+    destruct (s.[? x]%fmap) eqn:Hsx.
+    + f_equal. unfold sget. rewrite Hsx. cbn. reflexivity.
+    + exfalso.
+      assert (Hnot : (x \in domf s) = false).
+      { generalize (fndSome s x). rewrite Hsx. cbn. intro Heq. symmetry. exact Heq. }
+      rewrite Hnot in Hin. discriminate.
+  - reflexivity.
 Qed.
 
 (** The result type indicates the end value of a program: either a final
@@ -291,9 +351,9 @@ Lemma red_nondeterm :
   exists cs cs1 cs2,
     red cs cs1 /\ red cs cs2 /\ cs1 <> cs2.
 Proof.
-  exists (CHOICE SKIP (ASSIGN "x" (CONST 1)), fun x => 0).
-  exists (SKIP, fun x => 0).
-  exists (ASSIGN "x" (CONST 1), fun x => 0).
+  exists (CHOICE SKIP (ASSIGN "x" (CONST 1)), [fmap]%fmap : store).
+  exists (SKIP, [fmap]%fmap : store).
+  exists (ASSIGN "x" (CONST 1), [fmap]%fmap : store).
   split.
   - apply red_choice_left.
   - split.
@@ -444,7 +504,7 @@ Lemma cexec_cstar_err_to_star:
 Proof.
   intros c s r H. dependent induction H; intros sf' EQ; try discriminate.
   - injection EQ as ->. exists s. split; [ apply star_refl | exact H ].
-  - destruct (IHcexec2 c eq_refl sf' EQ) as (sm & STAR & ERR).
+  - destruct (IHcexec2 c Logic.eq_refl sf' EQ) as (sm & STAR & ERR).
     exists sm. split; [ eapply star_step; eauto | exact ERR ].
 Qed.
 
@@ -520,7 +580,7 @@ Lemma cstar_seq_comm:
   forall c, step_iter ((CSTAR c) ;; c) ≡ step_iter (c ;; (CSTAR c)).
 Proof.
   intro c.
-  rewrite !step_iter_seq, !step_iter_cstar.
+  rewrite !step_iter_seq. rewrite !step_iter_cstar.
   symmetry. apply rcomp_star_shift.
 Qed.
 

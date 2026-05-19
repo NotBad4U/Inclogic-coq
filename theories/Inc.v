@@ -1,4 +1,6 @@
 From Stdlib Require Import Arith ZArith Psatz Bool String List Program.Equality FunctionalExtensionality.
+From mathcomp Require Import ssrbool eqtype choice.
+From mathcomp Require Import finmap.
 From IncLogic Require Import Imp Sequences Hoare.
 
 Local Open Scope string_scope.
@@ -15,29 +17,33 @@ Definition ffalse : assertion := fun _ => False.
 
 Inductive Inc_triple: assertion -> com -> postassertion -> Prop :=
 | Inc_Empty_under_approx: forall P c,
-    ⟦ P ⟧ c ⟦ ϵ ↑ ffalse ⟧
+  (*───────────────────*)
+  ⟦ P ⟧ c ⟦ ϵ ↑ ffalse ⟧
 | Inc_triple_skip: forall P,
-    ⟦ P ⟧ SKIP ⟦ ok ↑ P ⟧
+  (*───────────────────*)
+  ⟦ P ⟧ SKIP ⟦ ok ↑ P ⟧
 | Inc_choice_l: forall P c1 c2,
-    ⟦ P ⟧ c1 ⟦ ϵ ↑ P ⟧ ->
-    ⟦ P ⟧ (c1 ⊕ c2) ⟦ ϵ ↑ P ⟧
+    ⟦ P ⟧ c1 ⟦ ϵ ↑ P ⟧ 
+    (*──────────────────*)
+    -> ⟦ P ⟧ (c1 ⊕ c2) ⟦ ϵ ↑ P ⟧
 | Inc_choice_r: forall P c1 c2,
     ⟦ P ⟧ c2 ⟦ ϵ ↑ P ⟧ ->
+    (*──────────────────*)
     ⟦ P ⟧ (c1 ⊕ c2) ⟦ ϵ ↑ P ⟧
 | Inc_seq_ok: forall P c1 c2 Q1 Q2,
     ⟦ P ⟧ c1 ⟦ ok ↑ Q1 ⟧ ->
     ⟦ Q1 ⟧ c2 ⟦ ϵ ↑ Q2 ⟧ ->
-    (*---------------------------*)
+    (*─────────────────────*)
     ⟦ P ⟧   (c1 ;; c2) ⟦ ϵ ↑ Q2 ⟧
 | Inc_seq_err: forall P c1 c2 R,
     ⟦ P ⟧ c1 ⟦ err ↑ R ⟧ ->
-    (*---------------------------*)
+    (*──────────────────────*)
     ⟦ P ⟧   (c1 ;; c2) ⟦ ϵ ↑ R ⟧
 | Inc_iterate_zero: forall P c,
     ⟦ P ⟧ CSTAR c ⟦ ok ↑ P ⟧
 | Inc_iterate_step: forall P c Q,
     ⟦ Q ⟧ CSTAR c ;; c ⟦ ϵ ↑ P ⟧ ->
-    (*---------------------------*)
+    (*─────────────────────────────*)
     ⟦ P ⟧ CSTAR c ⟦ ϵ ↑ P ⟧
 | Inc_error: forall P,
     ⟦ P ⟧ ERROR ⟦ err ↑ P ⟧
@@ -45,19 +51,23 @@ Inductive Inc_triple: assertion -> com -> postassertion -> Prop :=
     (P -->> P') ->
     ⟦ P ⟧ c ⟦ ϵ ↑ Q ⟧ ->
     (Q' -->> Q) ->
+    (*──────────────────*)
     ⟦ P' ⟧ c ⟦ ϵ ↑ Q' ⟧
 | Inc_assume : forall P b,
     ⟦ P ⟧ (ASSUME b) ⟦ ok ↑ atrue b //\\ P ⟧
 | Inc_disjunc: forall P1 P2 c Q1 Q2,
     ⟦ P1 ⟧ c ⟦ ϵ ↑ Q1 ⟧ ->
     ⟦ P2 ⟧ c ⟦ ϵ ↑ Q2 ⟧ ->
+    (*─────────────────────────────────────*)
     ⟦ P1 \\// P2 ⟧ c ⟦ ϵ ↑ Q1 \\// Q2 ⟧
 | Inc_backwards_variant: forall (P: nat -> assertion) c,
     (forall n, ⟦ P n ⟧ c ⟦ ϵ ↑ P (n + 1)%nat ⟧) ->
+    (*─────────────────────────────────────*)
     ⟦ P 0%nat ⟧ CSTAR c ⟦ ok ↑ (fun s => exists (m: nat), P m s) ⟧
 (* [p] x = e [ok: ∃x'. p[x'/x] ∧ x = e[x'/x]] [er: false] *)
 | Inc_assign_fwd: forall x a P,
-     ⟦ P ⟧ ASSIGN x a ⟦ ok ↑ aexists (fun m => aexists (fun n =>
+  (*─────────────────────────────────────*)   
+  ⟦ P ⟧ ASSIGN x a ⟦ ok ↑ aexists (fun m => aexists (fun n =>
         aequal (VAR x) n //\\ aupdate x (CONST m) (P //\\ aequal a n))) ⟧
 where "⟦ P ⟧ c ⟦ 'ϵ' ↑ Q ⟧" :=
   (Inc_triple P c (fun r => match r with
@@ -223,22 +233,18 @@ Qed.
 Lemma inc_triple_assign_fwd: forall x a P,
   ⟦⟦ P ⟧⟧
   ASSIGN x a
-  ⟦⟦ ok ↑ aexists (fun m => aexists (fun n =>
+  ⟦⟦ ok ↑ (fun s => x \in domf s) //\\ aexists (fun m => aexists (fun n =>
      aequal (VAR x) n //\\ aupdate x (CONST m) (P //\\ aequal a n))) ⟧⟧.
 Proof.
   intros x a P r HQ.
   destruct r as [s' | s']; [ | exfalso; exact HQ ].
-  destruct HQ as [m [n [Heq_x [HP Heq_a]]]].
+  destruct HQ as [Hdom [m [n [Heq_x [HP Heq_a]]]]].
   cbn in HP, Heq_a, Heq_x.
   unfold aequal in Heq_x, Heq_a. cbn in Heq_x, Heq_a.
   exists (update x m s'). split; [ exact HP | ].
   replace s' with (update x (aeval a (update x m s')) (update x m s')) at 2.
   - apply cexec_assign.
-  - rewrite Heq_a.
-    extensionality y.
-    unfold update. destruct (string_dec x y) as [-> | Hneq].
-    + symmetry. exact Heq_x.
-    + reflexivity.
+  - rewrite Heq_a, update_shadow, <- Heq_x. apply update_get. exact Hdom.
 Qed.
 
 Lemma inc_triple_choice_r: forall P c1 c2 Q,
@@ -310,7 +316,7 @@ Definition not_free (x: ident) (P: assertion) : Prop :=
 
 (** "Free([e]) ∩ vars = ∅". *)
 Definition aexp_indep (e: aexp) (vars: ident -> Prop) : Prop :=
-  forall s1 s2, (forall y, ~ vars y -> s1 y = s2 y) -> aeval e s1 = aeval e s2.
+  forall (s1 s2 : store), (forall y, ~ vars y -> s1 y = s2 y) -> aeval e s1 = aeval e s2.
 
 (** "c's trajectory is invariant under changes to x":
     every cexec from s can be shifted to a cexec from (update x v s) ending
@@ -337,69 +343,146 @@ Lemma inc_triple_subst_I: forall x e c P Q,
   ~ modified_by c x ->
   cexec_indep c x ->
   aexp_indep e (modified_by c) ->
-  ⟦⟦ aupdate x e P ⟧⟧ c ⟦⟦ ϵ ↑ aupdate x e Q ⟧⟧.
+  ⟦⟦ aupdate x e P ⟧⟧ c ⟦⟦ ϵ ↑ aupdate x e Q //\\ in_domf x ⟧⟧.
 Proof.
-  unfold IncTriple, aupdate, aexp_indep, cexec_indep.
+  unfold IncTriple, aupdate, aexp_indep, cexec_indep, aand, in_domf.
   intros x e c P Q HT NMOD IND EDEP r HQex.
   destruct r as [s_out | s_out].
   - set (v := aeval e s_out) in *.
+    destruct HQex as [HQex Hdom_out].
     destruct (HT (RNormal (update x v s_out)) HQex) as (s_in & HPs_in & EXEC_in).
+    pose proof (cexec_modified x s_in c _ EXEC_in NMOD) as Hsx_eq.
+    cbn in Hsx_eq.
+    assert (Hsx : s_in x = v) by (rewrite <- Hsx_eq; apply update_same).
+    pose proof (cexec_dom_preserved x s_in c _ EXEC_in NMOD) as Hdom_in.
+    cbn in Hdom_in.
+    rewrite dom_update in Hdom_in. rewrite eqxx in Hdom_in. cbn in Hdom_in.
+    assert (Hdom_sin : (x \in domf s_in) = true) by (rewrite Hdom_in; reflexivity).
     exists (update x (s_out x) s_in).
-    assert (Hsx : s_in x = v).
-    { pose proof (cexec_modified x s_in c _ EXEC_in NMOD) as MOD.
-      cbn in MOD. rewrite <- MOD. apply update_same. }
     assert (Heval : aeval e (update x (s_out x) s_in) = v).
-    { apply EDEP. intros y NM. unfold update.
-      destruct (string_dec x y) as [-> | Hxy]; [ reflexivity | ].
+    { apply EDEP. intros y NM.
+      destruct (string_dec x y) as [-> | Hxy]; [ apply update_same | ].
       pose proof (cexec_modified y s_in c _ EXEC_in NM) as MODy.
-      cbn in MODy. rewrite <- MODy. unfold update.
-      destruct (string_dec x y); congruence. }
-    assert (Heq_out : update x (s_out x) (update x v s_out) = s_out).
-    { unfold update; extensionality y;
-      destruct (string_dec x y) as [-> | _]; reflexivity. }
+      cbn in MODy. rewrite update_other; [|exact Hxy].
+      rewrite <- MODy. rewrite update_other; [reflexivity|exact Hxy]. }
     split.
     + rewrite Heval.
-      replace (update x v (update x (s_out x) s_in)) with s_in; [ exact HPs_in | ].
-      unfold update. extensionality y. destruct (string_dec x y) as [-> | _].
-      * exact Hsx.
-      * reflexivity.
+      rewrite update_shadow. rewrite <- Hsx.
+      rewrite update_get; [exact HPs_in | exact Hdom_sin].
     + pose proof (IND s_in (s_out x) _ EXEC_in) as STEP. cbn in STEP.
+      rewrite update_shadow in STEP.
+      assert (Heq_out : update x (s_out x) s_out = s_out)
+        by (apply update_get; exact Hdom_out).
       rewrite Heq_out in STEP. exact STEP.
   - set (v := aeval e s_out) in *.
+    destruct HQex as [HQex Hdom_out].
     destruct (HT (RError (update x v s_out)) HQex) as (s_in & HPs_in & EXEC_in).
+    pose proof (cexec_modified x s_in c _ EXEC_in NMOD) as Hsx_eq.
+    cbn in Hsx_eq.
+    assert (Hsx : s_in x = v) by (rewrite <- Hsx_eq; apply update_same).
+    pose proof (cexec_dom_preserved x s_in c _ EXEC_in NMOD) as Hdom_in.
+    cbn in Hdom_in.
+    rewrite dom_update in Hdom_in. rewrite eqxx in Hdom_in. cbn in Hdom_in.
+    assert (Hdom_sin : (x \in domf s_in) = true) by (rewrite Hdom_in; reflexivity).
     exists (update x (s_out x) s_in).
-    assert (Hsx : s_in x = v).
-    { pose proof (cexec_modified x s_in c _ EXEC_in NMOD) as MOD.
-      cbn in MOD. rewrite <- MOD. apply update_same. }
     assert (Heval : aeval e (update x (s_out x) s_in) = v).
-    { apply EDEP. intros y NM. unfold update.
-      destruct (string_dec x y) as [-> | Hxy]; [ reflexivity | ].
+    { apply EDEP. intros y NM.
+      destruct (string_dec x y) as [-> | Hxy]; [ apply update_same | ].
       pose proof (cexec_modified y s_in c _ EXEC_in NM) as MODy.
-      cbn in MODy. rewrite <- MODy. unfold update.
-      destruct (string_dec x y); congruence. }
-    assert (Heq_out : update x (s_out x) (update x v s_out) = s_out).
-    { unfold update; extensionality y;
-      destruct (string_dec x y) as [-> | _]; reflexivity. }
+      cbn in MODy. rewrite update_other; [|exact Hxy].
+      rewrite <- MODy. rewrite update_other; [reflexivity|exact Hxy]. }
     split.
     + rewrite Heval.
-      replace (update x v (update x (s_out x) s_in)) with s_in; [ exact HPs_in | ].
-      unfold update. extensionality y. destruct (string_dec x y) as [-> | _].
-      * exact Hsx.
-      * reflexivity.
+      rewrite update_shadow. rewrite <- Hsx.
+      rewrite update_get; [exact HPs_in | exact Hdom_sin].
     + pose proof (IND s_in (s_out x) _ EXEC_in) as STEP. cbn in STEP.
+      rewrite update_shadow in STEP.
+      assert (Heq_out : update x (s_out x) s_out = s_out).
+      { apply update_get. exact Hdom_out. }
       rewrite Heq_out in STEP. exact STEP.
 Qed.
 
-(** Substitution II (IL.pdf): renaming with a fresh variable [y]. *)
+(** Substitution II (IL.pdf): renaming with a fresh variable [y].
+
+    The original statement (with only [cexec_indep c y]) is not provable: the
+    semantic IL triple requires constructing a witness [s_pre] such that
+    [s_pre =[c]=> s_out], but the only [s_in] available from [HT] reaches
+    [update x (s_out y) s_out].  Without [c] being [x]-invariant, we cannot
+    shift [x] in [s_in] to repair this.
+
+    The provable version adds [cexec_indep c x], [~modified_by c x],
+    [~modified_by c y], and [x ∈ domf s_out], [y ∈ domf s_out] (the latter
+    two are vacuous under the old function-store model, real under finmap). *)
 Lemma inc_triple_subst_II: forall x y c P Q,
   x <> y ->
   ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ Q ⟧⟧ ->
   not_free y P ->
   not_free y Q ->
   cexec_indep c y ->
-  ⟦⟦ aupdate x (VAR y) P ⟧⟧ c ⟦⟦ ϵ ↑ aupdate x (VAR y) Q ⟧⟧.
+  cexec_indep c x ->
+  ~ modified_by c x ->
+  ~ modified_by c y ->
+  ⟦⟦ aupdate x (VAR y) P ⟧⟧ c
+  ⟦⟦ ϵ ↑ aupdate x (VAR y) Q //\\ in_domf x //\\ in_domf y ⟧⟧.
 Proof.
-Admitted.
+  unfold IncTriple, aupdate, aand, in_domf, not_free, independent_of.
+  intros x y c P Q Hxy HT NFP NFQ INDy INDx NMODx NMODy r HQex.
+  destruct r as [s_out | s_out].
+  - destruct HQex as [HQex [Hdx Hdy]].
+    cbn in HQex.
+    destruct (HT (RNormal (update x (s_out y) s_out)) HQex)
+      as (s_in & HPs_in & EXEC_in).
+    cbn in EXEC_in.
+    pose proof (cexec_dom_preserved x s_in c _ EXEC_in NMODx) as Hdom_xin.
+    cbn in Hdom_xin. rewrite dom_update in Hdom_xin.
+    rewrite eqxx in Hdom_xin. cbn in Hdom_xin.
+    assert (Hdom_sin_x : (x \in domf s_in) = true)
+      by (rewrite Hdom_xin; reflexivity).
+    pose proof (cexec_modified x s_in c _ EXEC_in NMODx) as Hsx_eq.
+    cbn in Hsx_eq.
+    assert (Hsx : s_in x = s_out y) by (rewrite <- Hsx_eq; apply update_same).
+    pose proof (cexec_modified y s_in c _ EXEC_in NMODy) as Hsy_eq.
+    cbn in Hsy_eq.
+    assert (Hsy : s_in y = s_out y).
+    { rewrite <- Hsy_eq. rewrite update_other; [reflexivity | exact Hxy]. }
+    exists (update x (s_out x) s_in).
+    split.
+    + cbn [aeval]. rewrite update_other; [|exact Hxy].
+      rewrite update_shadow. rewrite Hsy, <- Hsx.
+      rewrite update_get; [exact HPs_in | exact Hdom_sin_x].
+    + pose proof (INDx s_in (s_out x) _ EXEC_in) as STEP. cbn in STEP.
+      rewrite update_shadow in STEP.
+      assert (Heq_out : update x (s_out x) s_out = s_out)
+        by (apply update_get; exact Hdx).
+      rewrite Heq_out in STEP. exact STEP.
+  - destruct HQex as [HQex [Hdx Hdy]].
+    cbn in HQex.
+    destruct (HT (RError (update x (s_out y) s_out)) HQex)
+      as (s_in & HPs_in & EXEC_in).
+    cbn in EXEC_in.
+    pose proof (cexec_dom_preserved x s_in c _ EXEC_in NMODx) as Hdom_xin.
+    cbn in Hdom_xin. rewrite dom_update in Hdom_xin.
+    rewrite eqxx in Hdom_xin. cbn in Hdom_xin.
+    assert (Hdom_sin_x : (x \in domf s_in) = true)
+      by (rewrite Hdom_xin; reflexivity).
+    pose proof (cexec_modified x s_in c _ EXEC_in NMODx) as Hsx_eq.
+    cbn in Hsx_eq.
+    assert (Hsx : s_in x = s_out y) by (rewrite <- Hsx_eq; apply update_same).
+    pose proof (cexec_modified y s_in c _ EXEC_in NMODy) as Hsy_eq.
+    cbn in Hsy_eq.
+    assert (Hsy : s_in y = s_out y).
+    { rewrite <- Hsy_eq. rewrite update_other; [reflexivity | exact Hxy]. }
+    exists (update x (s_out x) s_in).
+    split.
+    + cbn [aeval]. rewrite update_other; [|exact Hxy].
+      rewrite update_shadow. rewrite Hsy, <- Hsx.
+      rewrite update_get; [exact HPs_in | exact Hdom_sin_x].
+    + pose proof (INDx s_in (s_out x) _ EXEC_in) as STEP. cbn in STEP.
+      rewrite update_shadow in STEP.
+      assert (Heq_out : update x (s_out x) s_out = s_out)
+        by (apply update_get; exact Hdx).
+      rewrite Heq_out in STEP. exact STEP.
+Qed.
 
 Lemma inc_triple_constancy: forall P c Q f,
     ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ Q ⟧⟧ ->
@@ -549,9 +632,9 @@ Module StrongestLiberalPostcondition.
   | SKIP => P
   | ERROR => ffalse
   | ASSUME b => atrue b //\\ P
-  | ASSIGN x a => aexists (fun (m: Z) => aexists (fun (n: Z) =>
+  | ASSIGN x a => in_domf x //\\ aexists (fun (m: Z) => aexists (fun (n: Z) =>
       aequal (VAR x) n //\\ aupdate x (CONST m) (P //\\ aequal a n)))
-  | NONDET x => aforall (fun (m: aexp) => aupdate x m P)
+  | NONDET x => in_domf x //\\ aforall (fun (m: aexp) => aupdate x m P)
   | c1 ⊕ c2 => slp_ok P c1 \\// slp_ok P c2
   | c1 ;; c2 => slp_ok (slp_ok P c1) c2
   | CSTAR c => ffalse (* FIXME: Change IMP so that Cstar can carry invariant  *)
@@ -579,23 +662,20 @@ Module StrongestLiberalPostcondition.
       exists s. split; [exact HQ | apply cexec_skip].
     - (* ERROR *) destruct r as [s|s]; contradiction.
     - (* ASSIGN x a *) destruct r as [s|s]; [|contradiction].
-      destruct HQ as [m [n [Heq_x [HP Heq_a]]]].
+      destruct HQ as [Hdom [m [n [Heq_x [HP Heq_a]]]]].
       cbn in HP, Heq_a, Heq_x.
       unfold aequal in Heq_x, Heq_a. cbn in Heq_x, Heq_a.
       exists (update x m s). split; [ exact HP | ].
       replace s with (update x (aeval a (update x m s)) (update x m s)) at 2.
       + apply cexec_assign.
-      + rewrite Heq_a. extensionality y.
-        unfold update. destruct (string_dec x y) as [-> | Hneq].
-        * symmetry. exact Heq_x.
-        * reflexivity.
+      + rewrite Heq_a, update_shadow, <- Heq_x. apply update_get. exact Hdom.
     - (* NONDET x *) destruct r as [s|s]; [|contradiction].
+      destruct HQ as [Hdom HQ].
       exists (update x 0 s). split.
       + apply (HQ (CONST 0)).
       + replace s with (update x (s x) (update x 0 s)) at 2.
         * apply cexec_nondet.
-        * unfold update. extensionality y.
-          destruct (string_dec x y) as [-> | _]; reflexivity.
+        * rewrite update_shadow. apply update_get. exact Hdom.
     - (* ASSUME b *) destruct r as [s|s]; [|contradiction].
       destruct HQ as [Hb HP].
       exists s. split; [exact HP | apply cexec_assume; exact Hb].

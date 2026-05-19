@@ -1,4 +1,6 @@
 From Stdlib Require Import Arith ZArith Psatz Bool String List Program.Equality.
+From mathcomp Require Import ssrbool eqtype choice.
+From mathcomp Require Import finmap.
 From IncLogic Require Import Imp Sequences.
 
 Local Open Scope string_scope.
@@ -22,7 +24,13 @@ Proof.
   eapply star_step. apply red_seq_done.
   eapply star_step. apply red_assign.
   apply star_refl.
-- unfold update; cbn. auto.
+- cbn [aeval]. split.
+  + rewrite (update_other "y"); [|intros H; discriminate H].
+    rewrite update_same.
+    rewrite update_other; [reflexivity | intros H; discriminate H].
+  + rewrite update_same.
+    rewrite update_other; [|intros H; discriminate H].
+    apply update_same.
 Qed.
 
 
@@ -32,9 +40,9 @@ Definition slow_add :=
          ASSIGN "y" (PLUS  (VAR "y") (CONST 1))) END.
 
 Lemma slow_add_correct:
-  forall s,
+  forall (s : store),
   s "x" >= 0 ->
-  exists s', star red (slow_add, s) (SKIP, s') /\ s' "y" = s "y" + s "x".
+  exists s' : store, star red (slow_add, s) (SKIP, s') /\ s' "y" = s "y" + s "x".
 Proof.
 Admitted.
 
@@ -68,10 +76,12 @@ Definition aupdate (x: ident) (a: aexp) (P: assertion) : assertion :=
 
 Notation "P [ x ↦ a ]" := (aupdate x a P) (at level 10).
 
-Example aupdate_example: 
+Example aupdate_example:
   (aequal (VAR "y") 5 [ "y" ↦ (PLUS (VAR "y") (CONST 2)) ])
-  (fun _ => 3).
-Proof. cbv. reflexivity. Qed.
+  (update "y" 3%Z (finmap.fmap0 : store)).
+Proof.
+  unfold aupdate, aequal. cbn [aeval]. rewrite !update_same. reflexivity.
+Qed.
 
 (** Pointwise implication.  Unlike conjunction and disjunction, this is
     not a predicate over the store, just a Coq proposition. *)
@@ -166,7 +176,14 @@ Proof.
   eapply Hoare_consequence_pre.
 - unfold swap_xy. eapply Hoare_seq_ok. apply Hoare_assign_r.
   eapply Hoare_seq_ok. apply Hoare_assign_r. apply Hoare_assign_r.
-- unfold aequal, aupdate, aand, aimp; cbn. tauto.
+- unfold aequal, aupdate, aand, aimp; cbn [aeval].
+  intros s [Hx Hy].
+  rewrite (update_other "y"); [|intros H; discriminate H].
+  rewrite update_same. rewrite update_same.
+  rewrite update_other; [|intros H; discriminate H].
+  rewrite update_other; [|intros H; discriminate H].
+  rewrite update_same.
+  split; assumption.
 Qed.
 
 (** * Soundness of Hoare logic *)
@@ -387,8 +404,57 @@ Proof.
     try (apply IHEXEC; tauto).
 Qed.
 
+(** "[x] belongs to the (finite) domain of the store [s]."
+
+    Trivially true for every variable under the old function-store model,
+    but a real predicate with finmap stores. *)
+Definition in_domf (x: ident) : assertion :=
+  fun s => x \in domf s.
+
+(** [x] in [domf] is preserved by any [cexec] that does not modify [x]. *)
+Lemma dom_update: forall (x y: ident) v (s: store),
+  (x \in domf (update y v s)) = ((x == y) || (x \in domf s))%bool.
+Proof.
+  intros x y v s. unfold update. rewrite dom_setf.
+  apply in_fset1U.
+Qed.
+
+Lemma cexec_dom_preserved: forall x s1 c s2,
+  cexec s1 c s2 -> ~modified_by c x ->
+  match s2 with
+  | RNormal s => (x \in domf s) = (x \in domf s1)
+  | RError  s => (x \in domf s) = (x \in domf s1)
+  end.
+Proof.
+  intros x s1 c s2 EXEC.
+  induction EXEC; intros NMOD; cbn in NMOD; try reflexivity.
+  - rewrite dom_update.
+    assert (Hne : (x == x0) = false).
+    { apply (@ssrbool.introF _ ((x == x0)%bool) (@eqP _ _ _)). intro H. apply NMOD, H. }
+    rewrite Hne. reflexivity.
+  - rewrite dom_update.
+    assert (Hne : (x == x0) = false).
+    { apply (@ssrbool.introF _ ((x == x0)%bool) (@eqP _ _ _)). intro H. apply NMOD, H. }
+    rewrite Hne. reflexivity.
+  - apply Decidable.not_or in NMOD. destruct NMOD as [N1 N2].
+    specialize (IHEXEC1 N1). specialize (IHEXEC2 N2).
+    rewrite IHEXEC2, IHEXEC1. reflexivity.
+  - apply Decidable.not_or in NMOD. destruct NMOD as [N1 _].
+    apply IHEXEC. exact N1.
+  - apply Decidable.not_or in NMOD. destruct NMOD as [N1 N2].
+    specialize (IHEXEC1 N1). specialize (IHEXEC2 N2).
+    rewrite IHEXEC2, IHEXEC1. reflexivity.
+  - apply Decidable.not_or in NMOD. apply IHEXEC, NMOD.
+  - apply Decidable.not_or in NMOD. apply IHEXEC, NMOD.
+  - specialize (IHEXEC1 NMOD). specialize (IHEXEC2 NMOD).
+    rewrite IHEXEC2, IHEXEC1. reflexivity.
+  - apply IHEXEC. exact NMOD.
+  - specialize (IHEXEC1 NMOD). specialize (IHEXEC2 NMOD).
+    rewrite IHEXEC2, IHEXEC1. reflexivity.
+Qed.
+
 Definition independent_of (P: assertion) (vars: ident -> Prop) : Prop :=
-  forall s1 s2,
+  forall (s1 s2 : store),
   (forall x, ~ vars x -> s1 x = s2 x) ->
   (P s1 <-> P s2).
 
@@ -645,7 +711,7 @@ Module Soundness.
         revert HP. induction EXEC as [|x y z STEP STAR IHSTAR]; intros HP.
         * exact HP.
         * apply IHSTAR. unfold step_iter in STEP.
-          specialize (IHbody (aeval a x) x (RNormal y) STEP (conj HP eq_refl)).
+          specialize (IHbody (aeval a x) x (RNormal y) STEP (conj HP (Logic.eq_refl _))).
           cbn in IHbody. destruct IHbody as [_ HINV_y]. exact HINV_y.
       + (* RError: same chain up to the erroring iteration *)
         apply cexec_cstar_err_iff in EXEC.
@@ -655,10 +721,10 @@ Module Soundness.
           induction STAR as [|x y z STEP STAR' IHSTAR']; intros HP.
           - exact HP.
           - apply IHSTAR'. unfold step_iter in STEP.
-            specialize (IHbody (aeval a x) x (RNormal y) STEP (conj HP eq_refl)).
+            specialize (IHbody (aeval a x) x (RNormal y) STEP (conj HP (Logic.eq_refl _))).
             cbn in IHbody. destruct IHbody as [_ HINV_y]. exact HINV_y. }
         specialize (IHbody (aeval a sm) sm (RError s') ERR
-                          (conj HINV_sm eq_refl)).
+                          (conj HINV_sm (Logic.eq_refl _))).
         cbn in IHbody. exact IHbody.
   Qed.
 
