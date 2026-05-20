@@ -6,3 +6,7 @@ theories/Imp.vo theories/Imp.glob theories/Imp.v.beautified theories/Imp.require
 theories/Imp.vos theories/Imp.vok theories/Imp.required_vos: theories/Imp.v theories/RelKleene.vos theories/Sequences.vos /Users/alecol/.opam/default/lib/rocq-runtime/rocqworker
 theories/Hoare.vo theories/Hoare.glob theories/Hoare.v.beautified theories/Hoare.required_vo: theories/Hoare.v theories/Imp.vo theories/Sequences.vo /Users/alecol/.opam/default/lib/rocq-runtime/rocqworker
 theories/Hoare.vos theories/Hoare.vok theories/Hoare.required_vos: theories/Hoare.v theories/Imp.vos theories/Sequences.vos /Users/alecol/.opam/default/lib/rocq-runtime/rocqworker
+theories/Inc.vo theories/Inc.glob theories/Inc.v.beautified theories/Inc.required_vo: theories/Inc.v theories/Hoare.vo theories/Imp.vo theories/Sequences.vo /Users/alecol/.opam/default/lib/rocq-runtime/rocqworker
+theories/Inc.vos theories/Inc.vok theories/Inc.required_vos: theories/Inc.v theories/Hoare.vos theories/Imp.vos theories/Sequences.vos /Users/alecol/.opam/default/lib/rocq-runtime/rocqworker
+theories/ExampleInc.vo theories/ExampleInc.glob theories/ExampleInc.v.beautified theories/ExampleInc.required_vo: theories/ExampleInc.v theories/Hoare.vo theories/Imp.vo theories/Inc.vo theories/Sequences.vo /Users/alecol/.opam/default/lib/rocq-runtime/rocqworker
+theories/ExampleInc.vos theories/ExampleInc.vok theories/ExampleInc.required_vos: theories/ExampleInc.v theories/Hoare.vos theories/Imp.vos theories/Inc.vos theories/Sequences.vos /Users/alecol/.opam/default/lib/rocq-runtime/rocqworker

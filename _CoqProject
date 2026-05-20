@@ -3,3 +3,5 @@ theories/Sequences.v
 theories/RelKleene.v
 theories/Imp.v
 theories/Hoare.v
+theories/Inc.v
+theories/ExampleInc.v
