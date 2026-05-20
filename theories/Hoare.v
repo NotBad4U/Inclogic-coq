@@ -1,4 +1,4 @@
-From Stdlib Require Import Arith ZArith Psatz Bool String List Program.Equality.
+From Stdlib Require Import Arith ZArith Psatz Bool String List Program.Equality FunctionalExtensionality.
 From mathcomp Require Import ssrbool eqtype choice.
 From mathcomp Require Import finmap.
 From IncLogic Require Import Imp Sequences.
@@ -116,6 +116,12 @@ Ltac Tauto :=
 
 Reserved Notation "⦃ P ⦄ c ⦃ Q ⦄" (at level 90, c at next level).
 
+Definition aforall {A: Type} (P: A -> assertion) : assertion :=
+  fun (s: store) => forall (a: A), P a s.
+
+Definition aexists {A: Type} (P: A -> assertion) : assertion :=
+  fun (s: store) => exists (a: A), P a s.
+
 Inductive WeakHoareRes: assertion -> com -> postassertion -> Prop :=
 | Hoare_skip_r: forall P,
   (* ------------------ *)
@@ -123,6 +129,8 @@ Inductive WeakHoareRes: assertion -> com -> postassertion -> Prop :=
 | Hoare_assign_r: forall P x a,
   (* ------------------------------ *)
     ⦃ aupdate x a P ⦄ ASSIGN x a ⦃ P ⦄
+| Hoare_nondet: forall x Q,
+      ⦃ aforall (fun n => aupdate x (CONST n) Q) ⦄ NONDET x ⦃ Q ⦄
 | Hoare_seq_ok: forall P Q R c1 c2,
     ⦃ P ⦄ c1 ⦃ Q ⦄ ->
     ⦃ Q ⦄ c2 ⦃ R ⦄ ->
@@ -211,6 +219,53 @@ Proof.
   unfold triple, aupdate; intros P x a s r EXEC PRE.
   inversion EXEC; subst.
   eexists. split; [ reflexivity | exact PRE ].
+Qed.
+
+Lemma Hoare_nondet_inv: forall x P Q,
+  ⦃ P ⦄ NONDET x ⦃ Q ⦄ -> (P -->> aforall (fun n => aupdate x (CONST n) Q)).
+Proof.
+  intros x P Q H.
+  remember (NONDET x) as c eqn:Hc.
+  remember (fun r : result => match r with
+                              | RNormal s => Q s
+                              | RError _ => False
+                              end) as Po eqn:HPo.
+  revert Q HPo. revert x Hc.
+  induction H; intros xg Hc Qg HPo; try discriminate Hc.
+  - (* Hoare_nondet *)
+    injection Hc as Hxx; subst xg.
+    assert (HQeq : Q = Qg).
+    { apply functional_extensionality. intros s.
+      change (Q s) with ((fun r : result => match r with
+                                            | RNormal s => Q s
+                                            | RError _ => False
+                                            end) (RNormal s)).
+      rewrite HPo. reflexivity. }
+    subst Q. unfold aimp. auto.
+  - (* Hoare_consequence_res *)
+    assert (HQeq : Q' = Qg).
+    { apply functional_extensionality. intros s.
+      change (Q' s) with ((fun r : result => match r with
+                                             | RNormal s => Q' s
+                                             | RError _ => False
+                                             end) (RNormal s)).
+      rewrite HPo. reflexivity. }
+    subst Q'.
+    intros s HP's n.
+    apply H1.
+    refine (IHWeakHoareRes xg Hc Q _ s _ n).
+    + reflexivity.
+    + apply H0. exact HP's.
+Qed.
+
+Lemma triple_nondet: forall x Q,
+    ⦃⦃ aforall (fun n => aupdate x (CONST n) Q) ⦄⦄ NONDET x ⦃⦃ Q ⦄⦄.
+Proof.
+  unfold triple, aforall, aupdate.
+  intros x Q s r EXEC PRE.
+  inversion EXEC; subst.
+  eexists. split; [ reflexivity | ].
+  cbn. apply PRE.
 Qed.
 
 Lemma triple_seq: forall P Q R c1 c2,
@@ -361,12 +416,6 @@ Proof.
   destruct (HT s r EXEC (P'P s PRE)) as (s' & EQ & QSx).
   exists s'. split; [ exact EQ | apply QQ', QSx ].
 Qed.
-
-Definition aforall {A: Type} (P: A -> assertion) : assertion :=
-  fun (s: store) => forall (a: A), P a s.
-
-Definition aexists {A: Type} (P: A -> assertion) : assertion :=
-  fun (s: store) => exists (a: A), P a s.
 
 Lemma triple_assign_fwd: forall x a P,
   ⦃⦃ P ⦄⦄

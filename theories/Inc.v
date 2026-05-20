@@ -58,17 +58,20 @@ Inductive Inc_triple: assertion -> com -> postassertion -> Prop :=
 | Inc_disjunc: forall P1 P2 c Q1 Q2,
     ⟦ P1 ⟧ c ⟦ ϵ ↑ Q1 ⟧ ->
     ⟦ P2 ⟧ c ⟦ ϵ ↑ Q2 ⟧ ->
-    (*─────────────────────────────────────*)
+    (*───────────────────────────────*)
     ⟦ P1 \\// P2 ⟧ c ⟦ ϵ ↑ Q1 \\// Q2 ⟧
 | Inc_backwards_variant: forall (P: nat -> assertion) c,
     (forall n, ⟦ P n ⟧ c ⟦ ϵ ↑ P (n + 1)%nat ⟧) ->
-    (*─────────────────────────────────────*)
+    (*───────────────────────────────────────────────────────────*)
     ⟦ P 0%nat ⟧ CSTAR c ⟦ ok ↑ (fun s => exists (m: nat), P m s) ⟧
 (* [p] x = e [ok: ∃x'. p[x'/x] ∧ x = e[x'/x]] [er: false] *)
 | Inc_assign_fwd: forall x a P,
-  (*─────────────────────────────────────*)   
+  (*────────────────────────────────────────────────────────────────────*)   
   ⟦ P ⟧ ASSIGN x a ⟦ ok ↑ aexists (fun m => aexists (fun n =>
         aequal (VAR x) n //\\ aupdate x (CONST m) (P //\\ aequal a n))) ⟧
+| Inc_nondet: forall x P,
+    (*─────────────────────────────────────────────────────────────*)
+    ⟦ P ⟧ NONDET x ⟦ ok ↑ (aexists (fun n => aupdate x (CONST n) P)) ⟧
 where "⟦ P ⟧ c ⟦ 'ϵ' ↑ Q ⟧" :=
   (Inc_triple P c (fun r => match r with
                             | RNormal s => Q s
@@ -502,6 +505,21 @@ Proof.
     apply (proj1 (INDEP s_out s
       (fun x NMOD => cexec_modified x s c (RError s_out) EXEC NMOD))).
     exact HFs.
+Qed.
+
+Lemma inc_triple_nondet: forall x P,
+  ⟦⟦ P ⟧⟧ NONDET x
+  ⟦⟦ ok ↑ (fun s => x \in domf s)
+       //\\ aexists (fun n => aupdate x (CONST n) P) ⟧⟧.
+Proof.
+  intros x P r HQ.
+  destruct r as [s' | s']; [ | exfalso; exact HQ ].
+  destruct HQ as [Hdom [n HPn]].
+  cbn in HPn. unfold aupdate in HPn.
+  exists (update x n s'). split; [ exact HPn | ].
+  replace s' with (update x (s' x) (update x n s')) at 2.
+  - apply cexec_nondet.
+  - rewrite update_shadow. apply update_get. exact Hdom.
 Qed.
 
 (* Derived Unrolling Rule *)
