@@ -3,7 +3,7 @@
     "rocq-mcp": {
       "command": "rocq-mcp",
       "env": {
-        "ROCQ_WORKSPACE": "/Users/alecol/Projects/Inclogic-coq"
+        "ROCQ_WORKSPACE": "/Users/alessiocoltellacci/Projects/Sideprojects/IncLogic"
       }
     }
   }

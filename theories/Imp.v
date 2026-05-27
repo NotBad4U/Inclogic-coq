@@ -20,7 +20,7 @@ Inductive aexp : Type :=
   | PLUS (a1: aexp) (a2: aexp)         (**r a sum of two expressions, or *)
   | MINUS (a1: aexp) (a2: aexp).       (**r a difference of two expressions *)
 
-Definition store : Type := ident -> Z.
+Definition store : Set := ident -> Z.
 
 Fixpoint aeval (a: aexp) (s: store) : Z :=
   match a with

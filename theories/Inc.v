@@ -390,16 +390,19 @@ Proof.
       rewrite Heq_out in STEP. exact STEP.
 Qed.
 
-(** Substitution II (IL.pdf): renaming with a fresh variable [y]. *)
+(** Substitution II: renaming x to y. Corollary of Sub I with [e := VAR y];
+    needs [c] to be x-invariant and not to modify [y]. *)
 Lemma inc_triple_subst_II: forall x y c P Q,
-  x <> y ->
   ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ Q ⟧⟧ ->
-  not_free y P ->
-  not_free y Q ->
-  cexec_indep c y ->
+  ~ modified_by c x ->
+  cexec_indep c x ->
+  ~ modified_by c y ->
   ⟦⟦ aupdate x (VAR y) P ⟧⟧ c ⟦⟦ ϵ ↑ aupdate x (VAR y) Q ⟧⟧.
 Proof.
-Admitted.
+  intros x y c P Q HT NMOD_x IND_x NMOD_y.
+  apply inc_triple_subst_I with (e := VAR y); try assumption.
+  unfold aexp_indep. intros s1 s2 H. cbn. apply H. exact NMOD_y.
+Qed.
 
 Lemma inc_triple_constancy: forall P c Q f,
     ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ Q ⟧⟧ ->
