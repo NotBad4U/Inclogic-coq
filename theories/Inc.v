@@ -39,12 +39,12 @@ Inductive Inc_triple: assertion -> com -> postassertion -> Prop :=
     ⟦ P ⟧ c1 ⟦ err ↑ R ⟧ ->
     (*──────────────────────*)
     ⟦ P ⟧   (c1 ;; c2) ⟦ ϵ ↑ R ⟧
-| Inc_iterate_zero: forall P c,
-    ⟦ P ⟧ CSTAR c ⟦ ok ↑ P ⟧
-| Inc_iterate_step: forall P c Q,
-    ⟦ Q ⟧ CSTAR c ;; c ⟦ ϵ ↑ P ⟧ ->
+| Inc_iterate_zero: forall Inv P c,
+    ⟦ P ⟧ CSTAR Inv c ⟦ ok ↑ P ⟧
+| Inc_iterate_step: forall Inv P c Q,
+    ⟦ Q ⟧ CSTAR Inv c ;; c ⟦ ϵ ↑ P ⟧ ->
     (*─────────────────────────────*)
-    ⟦ P ⟧ CSTAR c ⟦ ϵ ↑ P ⟧
+    ⟦ P ⟧ CSTAR Inv c ⟦ ϵ ↑ P ⟧
 | Inc_error: forall P,
     ⟦ P ⟧ ERROR ⟦ err ↑ P ⟧
 | Inc_consequence: forall P P' c Q Q',
@@ -60,10 +60,10 @@ Inductive Inc_triple: assertion -> com -> postassertion -> Prop :=
     ⟦ P2 ⟧ c ⟦ ϵ ↑ Q2 ⟧ ->
     (*───────────────────────────────*)
     ⟦ P1 \\// P2 ⟧ c ⟦ ϵ ↑ Q1 \\// Q2 ⟧
-| Inc_backwards_variant: forall (P: nat -> assertion) c,
+| Inc_backwards_variant: forall Inv (P: nat -> assertion) c,
     (forall n, ⟦ P n ⟧ c ⟦ ϵ ↑ P (n + 1)%nat ⟧) ->
     (*───────────────────────────────────────────────────────────*)
-    ⟦ P 0%nat ⟧ CSTAR c ⟦ ok ↑ (fun s => exists (m: nat), P m s) ⟧
+    ⟦ P 0%nat ⟧ CSTAR Inv c ⟦ ok ↑ (fun s => exists (m: nat), P m s) ⟧
 (* [p] x = e [ok: ∃x'. p[x'/x] ∧ x = e[x'/x]] [er: false] *)
 | Inc_assign_fwd: forall x a P,
   (*────────────────────────────────────────────────────────────────────*)   
@@ -180,11 +180,11 @@ Proof.
   apply cexec_seq_error. exact EXEC1.
 Qed.
 
-Lemma inc_triple_iterate_non_zero: forall P c Q,
-    ⟦⟦ P ⟧⟧  c ★ ;; c  ⟦⟦ ϵ ↑ Q ⟧⟧ ->
-    ⟦⟦ P ⟧⟧  c ★ ⟦⟦ ϵ ↑ Q ⟧⟧.
+Lemma inc_triple_iterate_non_zero: forall Inv P c Q,
+    ⟦⟦ P ⟧⟧  c ★ ⟨ Inv ⟩ ;; c  ⟦⟦ ϵ ↑ Q ⟧⟧ ->
+    ⟦⟦ P ⟧⟧  c ★ ⟨ Inv ⟩ ⟦⟦ ϵ ↑ Q ⟧⟧.
 Proof.
-  intros P c Q H r HQ.
+  intros Inv P c Q H r HQ.
   destruct (H r HQ) as (s & HPs & EXEC).
   inversion EXEC; subst.
   - (* CSTAR normal, then c normal: append one iteration *)
@@ -202,10 +202,10 @@ Proof.
     exists s'. split; [ exact H3 | exact H5 ].
 Qed.
 
-Lemma inc_triple_iterate_zero: forall P c,
-    ⟦⟦ P ⟧⟧  c ★ ⟦⟦ ok ↑ P ⟧⟧.
+Lemma inc_triple_iterate_zero: forall Inv P c,
+    ⟦⟦ P ⟧⟧  c ★ ⟨ Inv ⟩ ⟦⟦ ok ↑ P ⟧⟧.
 Proof.
-    intros P c r Q.
+    intros Inv P c r Q.
     destruct r as [s | sf].
     - exists s.  split; [ exact Q | ]. constructor.
     - contradiction Q.
@@ -260,11 +260,11 @@ Proof.
 Qed.
 
 
-Lemma inc_triple_backwards_variant: forall (P: nat -> assertion) c,
+Lemma inc_triple_backwards_variant: forall Inv (P: nat -> assertion) c,
     (forall n, ⟦⟦ P n ⟧⟧ c ⟦⟦ ϵ ↑ P (n + 1)%nat ⟧⟧) ->
-    ⟦⟦ P 0%nat ⟧⟧ c ★ ⟦⟦ ok ↑ (fun s => exists (m: nat), P m s) ⟧⟧.
+    ⟦⟦ P 0%nat ⟧⟧ c ★ ⟨ Inv ⟩ ⟦⟦ ok ↑ (fun s => exists (m: nat), P m s) ⟧⟧.
 Proof.
-  intros P c H r HQ.
+  intros Inv P c H r HQ.
   destruct r as [s' | s']; [ | exfalso; exact HQ ].
   destruct HQ as [m HPm].
   revert s' HPm.
@@ -533,10 +533,10 @@ Fixpoint cmd_n (i: nat) c : com :=
 (** A finite unrolling [cmd_n i c] is a refinement of [CSTAR c]: every
     execution of the unrolled form is an execution of the iteration.  Proven
     by induction on [i]. *)
-Lemma cmd_n_to_cstar: forall i c s r,
-  cexec s (cmd_n i c) r -> cexec s (CSTAR c) r.
+Lemma cmd_n_to_cstar: forall Inv i c s r,
+  cexec s (cmd_n i c) r -> cexec s (CSTAR Inv c) r.
 Proof.
-  induction i as [|n IH]; intros c s r EXEC; cbn in EXEC.
+  intros Inv; induction i as [|n IH]; intros c s r EXEC; cbn in EXEC.
   - inversion EXEC; subst. apply cexec_cstar_done.
   - apply cexec_seq_inv in EXEC.
     destruct EXEC as
@@ -549,16 +549,16 @@ Proof.
       eapply cexec_cstar_step_iter_error; eauto.
 Qed.
 
-Lemma inc_triple_derived_unrolling: forall P c (postassert_i: nat -> assertion),
+Lemma inc_triple_derived_unrolling: forall Inv P c (postassert_i: nat -> assertion),
     (forall i, ⟦⟦ P ⟧⟧ (cmd_n i c) ⟦⟦ ϵ ↑ postassert_i i ⟧⟧) ->
-    ⟦⟦ P ⟧⟧ c ★ ⟦⟦ ϵ ↑ aexists (fun i => postassert_i i) ⟧⟧.
+    ⟦⟦ P ⟧⟧ c ★ ⟨ Inv ⟩ ⟦⟦ ϵ ↑ aexists (fun i => postassert_i i) ⟧⟧.
 Proof.
-  intros P c postassert_i H r HQ.
+  intros Inv P c postassert_i H r HQ.
   destruct r as [s' | s']; cbn in HQ; destruct HQ as [j Hj].
   - destruct (H j (RNormal s') Hj) as (s & HPs & EXEC).
-    exists s. split; [ exact HPs | apply cmd_n_to_cstar in EXEC; exact EXEC ].
+    exists s. split; [ exact HPs | apply cmd_n_to_cstar with (Inv := Inv) in EXEC; exact EXEC ].
   - destruct (H j (RError s') Hj) as (s & HPs & EXEC).
-    exists s. split; [ exact HPs | apply cmd_n_to_cstar in EXEC; exact EXEC ].
+    exists s. split; [ exact HPs | apply cmd_n_to_cstar with (Inv := Inv) in EXEC; exact EXEC ].
 Qed.
 
 Module SPre.
@@ -655,7 +655,11 @@ Module StrongestLiberalPostcondition.
   | NONDET x => in_domf x //\\ aforall (fun (m: aexp) => aupdate x m P)
   | c1 ⊕ c2 => slp_ok P c1 \\// slp_ok P c2
   | c1 ;; c2 => slp_ok (slp_ok P c1) c2
-  | CSTAR c => ffalse (* FIXME: Change IMP so that Cstar can carry invariant  *)
+  | CSTAR Inv c => ffalse
+    (* The carried invariant [Inv] is now in scope here.  Using it for a
+       non-trivial loop SLP (e.g. [Inv]) requires adding soundness side
+       conditions to [slp_ok_correct] (at least [P -->> Inv] and that [Inv]
+       is closed under one iteration); left as [ffalse] until that is settled. *)
   end.
 
   (* Strongest Liberal Postcondition for error executions *)
@@ -668,7 +672,9 @@ Module StrongestLiberalPostcondition.
   | NONDET x => ffalse
   | c1 ⊕ c2 => slp_err P c1 \\// slp_err P c2
   | c1 ;; c2 => slp_err P c1 \\// slp_err (slp_ok P c1) c2
-  | CSTAR c => ffalse (* FIXME: Change IMP so that Cstar can carry invariant  *)
+  | CSTAR Inv c => ffalse
+    (* As for [slp_ok]: [Inv] is available, but a meaningful erroring loop SLP
+       needs soundness side conditions on [slp_err_correct] first. *)
   end.
 
   Lemma slp_ok_correct: forall P c,

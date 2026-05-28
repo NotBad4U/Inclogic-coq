@@ -167,15 +167,18 @@ Notation "x - y" := (MINUS x y) (in custom com at level 50, left associativity).
 
 (**  Commands *)
 
+Definition assertion : Type := store -> Prop.
+
+
 Inductive com: Type :=
-  | SKIP                         (**r do nothing *)
-  | ERROR                        (**r interrupt the program *)
-  | ASSIGN (x: ident) (a: aexp)  (**r assignment: [v := a] *)
-  | NONDET (x: ident)            (**r non-deterministic assignment to [x] *)
-  | ASSUME (b: bexp)             (**r assume that [b] holds *)
-  | SEQ (c1: com) (c2: com)      (**r sequence: [c1; c2] *)
-  | CHOICE (c1: com) (c2: com)   (**r non-deterministic choice: [c1 + c2] *)
-  | CSTAR (c1: com).             (**r non-deterministic iteration: [c1★] *)
+  | SKIP                              (**r do nothing *)
+  | ERROR                             (**r interrupt the program *)
+  | ASSIGN (x: ident) (a: aexp)       (**r assignment: [v := a] *)
+  | NONDET (x: ident)                 (**r non-deterministic assignment to [x] *)
+  | ASSUME (b: bexp)                  (**r assume that [b] holds *)
+  | SEQ (c1: com) (c2: com)           (**r sequence: [c1; c2] *)
+  | CHOICE (c1: com) (c2: com)        (**r non-deterministic choice: [c1 + c2] *)
+  | CSTAR (Inv: assertion) (c1: com). (**r non-deterministic iteration: [c1★] *)
 
 (** We can write [c1 ;; c2] instead of [SEQ c1 c2], it is easier on the eyes. *)
 
@@ -187,12 +190,13 @@ Notation "c1 '⊕' c2" := (CHOICE c1 c2)
 Notation "c '★'" := (CSTAR c)
                          (in custom com at level 90, right associativity). *)
 
-Notation "c '★'" := (CSTAR c)
+Notation "c '★' '⟨' I '⟩'" := (CSTAR I c)
                          (at level 90, right associativity) : com_scope.
 
+
 (** We can now define the syntax of while-loops in terms of the core IMP commands. *)
-Notation "'WHILE' b 'DO' c 'END'" :=
-  (((ASSUME b ;; c) ★) ;; ASSUME (NOT b))
+Notation "'WHILE' ⟨ I ⟩ b 'DO' c 'END'" :=
+  (((ASSUME b ;; c) ★ ⟨ I ⟩) ;; ASSUME (NOT b))
     (at level 95, right associativity) : com_scope.
 
 (** Similarly, we can define conditional statements.
@@ -234,7 +238,7 @@ Notation "'ASSERT' b" :=
 Definition Euclidean_division: com :=
   ASSIGN "r" (VAR "a") ;;
   ASSIGN "q" (CONST 0) ;;
-  WHILE (LESSEQUAL (VAR "b") (VAR "r")) DO
+  WHILE ⟨ fun s => s "r" >= 0 ⟩ (LESSEQUAL (VAR "b") (VAR "r")) DO
     (ASSIGN "r" (MINUS (VAR "r") (VAR "b")) ;;
      ASSIGN "q" (PLUS (VAR "q") (CONST 1)))
   END.
@@ -330,10 +334,10 @@ Inductive red: com * store -> com * store -> Prop :=
       red (CHOICE c1 c2, s) (c1, s)
   | red_choice_right: forall c1 c2 s,
       red (CHOICE c1 c2, s) (c2, s)
-  | red_cstar_done: forall c s,
-      red (CSTAR c, s) (SKIP, s)
-  | red_cstar_step: forall c s,
-      red (CSTAR c, s) (SEQ c (CSTAR c), s).
+  | red_cstar_done: forall Inv c s,
+      red (CSTAR Inv c, s) (SKIP, s)
+  | red_cstar_step: forall Inv c s,
+      red (CSTAR Inv c, s) (SEQ c (CSTAR Inv c), s).
 
 (** Final configurations for the small-step semantics, corresponding to [result]. *)
 Inductive final : com * store -> result -> Prop :=
@@ -435,19 +439,19 @@ Inductive cexec: store -> com -> result -> Prop :=
   | cexec_choice_right: forall s c1 c2 r,
     s =[ c2 ]=> r ->
     s =[ CHOICE c1 c2 ]=> r
-  | cexec_cstar_done: forall c s,
-      s =[ CSTAR c ]=> RNormal s
-  | cexec_cstar_step_ok : forall c s s' s'',
+  | cexec_cstar_done: forall Inv c s,
+      s =[ CSTAR Inv c ]=> RNormal s
+  | cexec_cstar_step_ok : forall Inv c s s' s'',
       s  =[ c ]=> RNormal s' ->
-      s' =[ CSTAR c ]=> RNormal s'' ->
-      s  =[ CSTAR c ]=> RNormal s''
-  | cexec_cstar_step_error : forall c s sf,
+      s' =[ CSTAR Inv c ]=> RNormal s'' ->
+      s  =[ CSTAR Inv c ]=> RNormal s''
+  | cexec_cstar_step_error : forall Inv c s sf,
       s =[ c ]=> RError sf ->
-      s =[ CSTAR c ]=> RError sf
-  | cexec_cstar_step_iter_error : forall c s s' sf,
+      s =[ CSTAR Inv c ]=> RError sf
+  | cexec_cstar_step_iter_error : forall Inv c s s' sf,
       s  =[ c ]=> RNormal s' ->
-      s' =[ CSTAR c ]=> RError sf ->
-      s  =[ CSTAR c ]=> RError sf
+      s' =[ CSTAR Inv c ]=> RError sf ->
+      s  =[ CSTAR Inv c ]=> RError sf
   where "st0 =[ c ]=> st1" := (cexec st0 c st1).
 
 Notation "s1 =[ c ]=> 'ok' ↑ s2" := (cexec s1 c (RNormal s2))
@@ -468,7 +472,7 @@ Definition step_iter (c: com) (s s': store) : Prop :=
   s =[ c ]=> RNormal s'.
 
 Lemma cexec_cstar_of_star:
-  forall c s s', star (step_iter c) s s' -> s =[ CSTAR c ]=> RNormal s'.
+  forall Inv c s s', star (step_iter c) s s' -> s =[ CSTAR Inv c ]=> RNormal s'.
 Proof.
   induction 1.
   - apply cexec_cstar_done.
@@ -476,20 +480,20 @@ Proof.
 Qed.
 
 Lemma star_of_cexec_cstar:
-  forall c s r,
-    s =[ CSTAR c ]=> r ->
+  forall Inv c s r,
+    s =[ CSTAR Inv c ]=> r ->
     forall s', r = RNormal s' -> star (step_iter c) s s'.
 Proof.
-  intros c s r H. dependent induction H; intros s0 EQ; try discriminate.
+  intros Inv c s r H. dependent induction H; intros s0 EQ; try discriminate.
   - inversion EQ; subst. apply star_refl.
   - inversion EQ; subst. eapply star_step; [ exact H | eauto ].
 Qed.
 
 Theorem cexec_cstar_iff_star:
-  forall c s s',
-    s =[ CSTAR c ]=> RNormal s' <-> star (step_iter c) s s'.
+  forall Inv c s s',
+    s =[ CSTAR Inv c ]=> RNormal s' <-> star (step_iter c) s s'.
 Proof.
-  intros c s s'. split.
+  intros Inv c s s'. split.
   - intro H. eapply star_of_cexec_cstar; eauto.
   - apply cexec_cstar_of_star.
 Qed.
@@ -497,23 +501,23 @@ Qed.
 (** Erroring execution of [CSTAR c]: some number of successful iterations
     followed by a body that errors. *)
 Lemma cexec_cstar_err_to_star:
-  forall c s r,
-    s =[ CSTAR c ]=> r ->
+  forall Inv c s r,
+    s =[ CSTAR Inv c ]=> r ->
     forall sf', r = RError sf' ->
     exists s', star (step_iter c) s s' /\ s' =[ c ]=> RError sf'.
 Proof.
-  intros c s r H. dependent induction H; intros sf' EQ; try discriminate.
+  intros Inv c s r H. dependent induction H; intros sf' EQ; try discriminate.
   - injection EQ as ->. exists s. split; [ apply star_refl | exact H ].
-  - destruct (IHcexec2 c Logic.eq_refl sf' EQ) as (sm & STAR & ERR).
+  - destruct (IHcexec2 Inv c Logic.eq_refl sf' EQ) as (sm & STAR & ERR).
     exists sm. split; [ eapply star_step; eauto | exact ERR ].
 Qed.
 
 Theorem cexec_cstar_err_iff:
-  forall c s sf,
-    s =[ CSTAR c ]=> RError sf <->
+  forall Inv c s sf,
+    s =[ CSTAR Inv c ]=> RError sf <->
     exists s', star (step_iter c) s s' /\ s' =[ c ]=> RError sf.
 Proof.
-  intros c s sf. split.
+  intros Inv c s sf. split.
   - intro H. eapply cexec_cstar_err_to_star; eauto.
   - intros (s' & STAR & ERR). induction STAR.
     + apply cexec_cstar_step_error. exact ERR.
@@ -569,17 +573,17 @@ Proof.
 Qed.
 
 Lemma step_iter_cstar:
-  forall c, step_iter (CSTAR c) ≡ star (step_iter c).
+  forall Inv c, step_iter (CSTAR Inv c) ≡ star (step_iter c).
 Proof.
-  intros c s s'. unfold step_iter. apply cexec_cstar_iff_star.
+  intros Inv c s s'. unfold step_iter. apply cexec_cstar_iff_star.
 Qed.
 
 (** [CSTAR c ;; c] and [c ;; CSTAR c] are semantically equivalent: the
     classical Kleene-algebra identity [R* · R = R · R*]. *)
 Lemma cstar_seq_comm:
-  forall c, step_iter ((CSTAR c) ;; c) ≡ step_iter (c ;; (CSTAR c)).
+  forall Inv c, step_iter ((CSTAR Inv c) ;; c) ≡ step_iter (c ;; (CSTAR Inv c)).
 Proof.
-  intro c.
+  intros Inv c.
   rewrite !step_iter_seq. rewrite !step_iter_cstar.
   symmetry. apply rcomp_star_shift.
 Qed.
@@ -667,7 +671,7 @@ Proof.
     + eapply star_trans.
       * apply star_one. apply red_cstar_step.
       * eapply star_trans.
-        -- apply red_seq_steps with (c2 := CSTAR c) in STAR1. exact STAR1.
+        -- apply red_seq_steps with (c2 := CSTAR Inv c) in STAR1. exact STAR1.
         -- eapply star_step. apply red_seq_done. subst. exact STAR2.
     + exact FINAL2.
   - (* CSTAR step error (body errors immediately) *)
@@ -677,7 +681,7 @@ Proof.
     + eapply star_trans.
       * apply star_one. apply red_cstar_step.
       * eapply star_trans.
-        -- apply red_seq_steps with (c2 := CSTAR c) in STAR1. exact STAR1.
+        -- apply red_seq_steps with (c2 := CSTAR Inv c) in STAR1. exact STAR1.
         -- apply star_one. apply red_seq_error.
     + apply final_error.
   - (* CSTAR step iter error (body ok, then iteration errors) *)
@@ -689,23 +693,23 @@ Proof.
     + eapply star_trans.
       * apply star_one. apply red_cstar_step.
       * eapply star_trans.
-        -- apply red_seq_steps with (c2 := CSTAR c) in STAR1. exact STAR1.
+        -- apply red_seq_steps with (c2 := CSTAR Inv c) in STAR1. exact STAR1.
         -- eapply star_step; [ apply red_seq_done | exact STAR2 ].
     + apply final_error.
 Qed.
 
 (* * One full body execution yields at least one [red] step from [c★] to [c★]. *)
 Lemma plus_cstar_iteration:
-  forall c s s',
+  forall Inv c s s',
     star red (c, s) (SKIP, s') ->
-    plus red (CSTAR c, s) (CSTAR c, s').
+    plus red (CSTAR Inv c, s) (CSTAR Inv c, s').
 Proof.
-  intros c s s' STARC.
+  intros Inv c s s' STARC.
   eapply plus_left.
   - apply red_cstar_step.
   - eapply star_trans.
     + (* reduce the body on the left of the sequence *)
-      apply red_seq_steps with (c2 := CSTAR c) in STARC.
+      apply red_seq_steps with (c2 := CSTAR Inv c) in STARC.
       exact STARC.
     + (* then drop the leading SKIP *)
       apply star_one. apply red_seq_done.
@@ -715,22 +719,22 @@ Qed.
 (** If the body always terminates (and is not [SKIP]), we can repeat it forever,
     hence there exists an infinite reduction sequence for [c★]. *)
 Lemma diverges_cstar_via_cexec_cstar_step:
-  forall c s,
+  forall Inv c s,
     (forall st, exists st', st =[ c ]=> RNormal st') ->
-    diverges s (CSTAR c).
+    diverges s (CSTAR Inv c).
 Proof.
-  intros c s BODY_TERMINATES.
+  intros Inv c s BODY_TERMINATES.
   unfold diverges.
   eapply (@infseq_coinduction_principle
             (com * store)
             red
-            (fun cs => exists st, cs = (CSTAR c, st))); eauto.
+            (fun cs => exists st, cs = (CSTAR Inv c, st))); eauto.
   intros cs (st0 & EQ). subst cs.
     destruct (BODY_TERMINATES st0) as (st1 & EXECc).
     pose proof (cexec_to_reds st0 c (RNormal st1) EXECc) as TERM.
     destruct TERM as (cs1 & STARc & FINALc).
     inversion FINALc; subst cs1.
-    exists (CSTAR c, st1). split.
+    exists (CSTAR Inv c, st1). split.
     + apply plus_cstar_iteration; subst; auto.
     + exists st1. reflexivity.
 Qed.

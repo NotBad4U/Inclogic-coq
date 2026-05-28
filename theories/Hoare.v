@@ -35,7 +35,7 @@ Qed.
 
 
 Definition slow_add :=
-  WHILE (LESSEQUAL (CONST 1) (VAR "x")) DO
+  WHILE ⟨ fun _ => True ⟩ (LESSEQUAL (CONST 1) (VAR "x")) DO
         (ASSIGN "x" (MINUS (VAR "x") (CONST 1)) ;;
          ASSIGN "y" (PLUS  (VAR "y") (CONST 1))) END.
 
@@ -45,8 +45,6 @@ Lemma slow_add_correct:
   exists s' : store, star red (slow_add, s) (SKIP, s') /\ s' "y" = s "y" + s "x".
 Proof.
 Admitted.
-
-Definition assertion : Type := store -> Prop.
 
 Definition postassertion : Type := result -> Prop.
 
@@ -151,10 +149,10 @@ Inductive WeakHoareRes: assertion -> com -> postassertion -> Prop :=
     ⦃ P ⦄ c2 ⦃ Q ⦄ ->
     (* ---------------------- *)
     ⦃ P ⦄ (c1 ⊕ c2) ⦃ Q ⦄
-| Hoare_cstar_ress: forall INV c, 
+| Hoare_cstar_ress: forall INV c,
     ⦃ INV ⦄ c ⦃ INV ⦄ ->
     (* ------------------ *)
-    ⦃ INV ⦄ (CSTAR c) ⦃ INV ⦄
+    ⦃ INV ⦄ (CSTAR INV c) ⦃ INV ⦄
 where "⦃ P ⦄ c ⦃ Q ⦄" :=
   (WeakHoareRes P c (fun r => match r with
                           | RNormal s => Q s
@@ -369,7 +367,7 @@ Qed.
 
 Lemma triple_while: forall P b c,
       ⦃⦃ atrue b //\\ P ⦄⦄ c ⦃⦃ P ⦄⦄ ->
-      ⦃⦃ P ⦄⦄ WHILE b DO c END ⦃⦃ afalse b //\\ P ⦄⦄.
+      ⦃⦃ P ⦄⦄ WHILE ⟨ P ⟩ b DO c END ⦃⦃ afalse b //\\ P ⦄⦄.
 Proof.
   unfold triple, aand, atrue, afalse.
   intros P b c H s r EXEC PRE.
@@ -434,7 +432,7 @@ Fixpoint modified_by (c: com) (x: ident) : Prop :=
   | NONDET y => x = y
   |  c1 ;; c2 => modified_by c1 x \/ modified_by c2 x
   |  c1 ⊕ c2 => modified_by c1 x \/ modified_by c2 x
-  |  c ★ => modified_by c x
+  |  CSTAR _ c => modified_by c x
   end.
 
 Lemma cexec_modified:
@@ -556,10 +554,10 @@ Inductive StrongHoareRes: assertion -> com -> postassertion -> Prop :=
     ⦇ P ⦈ c2 ⦇ Q ⦈ ->
     (* ---------------------- *)
     ⦇ P ⦈ (c1 ⊕ c2) ⦇ Q ⦈
-| HOARE_cstar_ress: forall INV c a, 
+| HOARE_cstar_ress: forall INV c a,
     (forall v,  ⦇ INV //\\ aequal a v ⦈ c ⦇ alessthan a v //\\ INV ⦈ ) ->
     (* ------------------ *)
-    ⦇ INV ⦈ (CSTAR c) ⦇ INV ⦈
+    ⦇ INV ⦈ (CSTAR INV c) ⦇ INV ⦈
 where "⦇ P ⦈ c ⦇ Q ⦈" :=
   (StrongHoareRes P c (fun r => match r with
                           | RNormal s => Q s
@@ -634,7 +632,7 @@ Lemma Triple_while: forall P variant b c,
      c
      ⦇⦇ P //\\ alessthan variant v ⦈⦈)
   ->
-     ⦇⦇ P ⦈⦈ WHILE b DO c END ⦇⦇ P //\\ afalse b ⦈⦈.
+     ⦇⦇ P ⦈⦈ WHILE ⟨ P ⟩ b DO c END ⦇⦇ P //\\ afalse b ⦈⦈.
 Proof.
   unfold Triple, aand, atrue, afalse, aequal, alessthan.
   intros P variant b c H s0 PRE0.
@@ -647,7 +645,7 @@ Proof.
               (Z.to_nat (aeval variant s) <= n)%nat ->
               P s ->
               exists sf,
-                cexec s (CSTAR (ASSUME b ;; c)) (RNormal sf) /\
+                cexec s (CSTAR P (ASSUME b ;; c)) (RNormal sf) /\
                 P sf /\ beval b sf = false).
   { induction n as [|n IH]; intros s Hvnn Hn PS.
     - (* n = 0: with 0 <= variant and Z.to_nat variant <= 0 we get variant = 0 *)
