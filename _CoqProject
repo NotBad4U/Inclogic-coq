@@ -5,3 +5,5 @@ theories/Imp.v
 theories/Hoare.v
 theories/Inc.v
 theories/ExampleInc.v
+theories/KatInc.v
+theories/KatIncImp.v
