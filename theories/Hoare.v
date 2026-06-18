@@ -89,9 +89,13 @@ Qed.
 Definition aimp (P Q: assertion) : Prop :=
   forall s, P s -> Q s.
 
+Definition paimp (P Q: postassertion) : Prop :=
+  forall r, P r -> Q r.
+
 (** A few notations to improve legibility. *)
 
 Notation "P -->> Q" := (aimp P Q) (at level 95, no associativity).
+Notation "P --* Q" := (paimp P Q) (at level 95, no associativity).
 Notation "P //\\ Q" := (aand P Q) (at level 80, right associativity).
 Notation "P \\// Q" := (aor P Q) (at level 75, right associativity).
 

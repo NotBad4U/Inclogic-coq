@@ -118,6 +118,10 @@ Notation "⟦⟦ P ⟧⟧ c ⟦⟦ 'ok' ↑ Q ⟧⟧" :=
                            end))
   (at level 90, c at next level).
 
+(* Postassertion-level triple: [Q] is a [postassertion] (it inspects the
+   result), as opposed to the [ϵ/ok/err ↑] variants which lift an [assertion]. *)
+Notation "⟦⟦ P ⟧⟧ c ⟦⟦ Q ⟧⟧" := (IncTriple P c Q) (at level 90, c at next level).
+
 
 Lemma disjunction_ok: forall P c Q1 Q2,
     ⟦ P ⟧ c ⟦ ϵ ↑ Q1 ⟧ ->
@@ -640,9 +644,33 @@ Qed.
 
 End IncSoundness.
 
-Module StrongestLiberalPostcondition.
+Module IncCompleteness.
 
-  Notation "⟦⟦ P ⟧⟧ c ⟦⟦ Q ⟧⟧" := (IncTriple P c Q) (at level 90, c at next level).
+(* Surprising *)
+Definition sem_sp (c: com) (P: assertion) : postassertion :=
+  fun r => exists s, P s /\ cexec s c r.
+
+(* [sem_sp c P] is itself a valid incorrectness post: the triple holds
+   definitionally, since the triple unfolds to exactly its definition.
+   We use the postassertion-level notation, since [sem_sp] inspects the
+   result rather than being a plain [assertion]. *)
+Lemma sem_sp_valid: forall P c,
+    ⟦⟦ P ⟧⟧ c ⟦⟦ sem_sp c P ⟧⟧.
+Proof.
+  intros P c r HQ. exact HQ.
+Qed.
+
+(* It is the strongest such post: any valid post is contained in it. *)
+Lemma sem_sp_strongest: forall P c (Q: postassertion),
+    ⟦⟦ P ⟧⟧ c ⟦⟦ Q ⟧⟧ ->
+    Q  --* sem_sp c P.
+Proof.
+  intros P c Q HT r HQ. exact (HT r HQ).
+Qed.
+
+End IncCompleteness.
+
+Module StrongestLiberalPostcondition.
 
   (* Strongest Liberal Postcondition for normal executions *)
   Fixpoint slp_ok (P: assertion) (c: com) : assertion :=
