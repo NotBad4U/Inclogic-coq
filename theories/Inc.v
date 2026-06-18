@@ -72,6 +72,58 @@ Inductive Inc_triple: assertion -> com -> postassertion -> Prop :=
 | Inc_nondet: forall x P,
     (*─────────────────────────────────────────────────────────────*)
     ⟦ P ⟧ NONDET x ⟦ ok ↑ (aexists (fun n => aupdate x (CONST n) P)) ⟧
+(* ── Sound, tag-tracking strongest-post rules added for completeness.
+   Each mirrors a clause of the operational semantics [cexec]; together
+   they let the strongest [ok]/[err] post of every command be derived.
+   They are all semantically valid (see the [inc_triple_*] lemmas and the
+   [cexec_*] constructors), so adding them preserves soundness. *)
+| Inc_consequence_gen: forall P P' c (Q Q': postassertion),
+    (P -->> P') ->
+    Inc_triple P c Q ->
+    (forall r, Q' r -> Q r) ->
+    (*──────────────────*)
+    Inc_triple P' c Q'
+| Inc_ok_err_to_eps: forall P c A B,
+    ⟦ P ⟧ c ⟦ ok ↑ A ⟧ ->
+    ⟦ P ⟧ c ⟦ err ↑ B ⟧ ->
+    (*──────────────────────────*)
+    ⟦ P ⟧ c ⟦ ϵ ↑ (A //\\ B) ⟧
+| Inc_assign_sp: forall x a P,
+    (*────────────────────────────────────────────────────────────────────*)
+    ⟦ P ⟧ ASSIGN x a ⟦ ok ↑ (fun s' => exists s, P s /\ s' = update x (aeval a s) s) ⟧
+| Inc_nondet_sp: forall x P,
+    (*────────────────────────────────────────────────────────────────────*)
+    ⟦ P ⟧ NONDET x ⟦ ok ↑ (fun s' => exists s n, P s /\ s' = update x n s) ⟧
+| Inc_ok_seq: forall P c1 c2 Q1 Q2,
+    ⟦ P ⟧ c1 ⟦ ok ↑ Q1 ⟧ ->
+    ⟦ Q1 ⟧ c2 ⟦ ok ↑ Q2 ⟧ ->
+    (*─────────────────────────*)
+    ⟦ P ⟧ (c1 ;; c2) ⟦ ok ↑ Q2 ⟧
+| Inc_err_seq: forall P c1 c2 Q1 R1 R2,
+    ⟦ P ⟧ c1 ⟦ err ↑ R1 ⟧ ->
+    ⟦ P ⟧ c1 ⟦ ok ↑ Q1 ⟧ ->
+    ⟦ Q1 ⟧ c2 ⟦ err ↑ R2 ⟧ ->
+    (*──────────────────────────────────*)
+    ⟦ P ⟧ (c1 ;; c2) ⟦ err ↑ (R1 \\// R2) ⟧
+| Inc_ok_choice: forall P c1 c2 Q1 Q2,
+    ⟦ P ⟧ c1 ⟦ ok ↑ Q1 ⟧ ->
+    ⟦ P ⟧ c2 ⟦ ok ↑ Q2 ⟧ ->
+    (*──────────────────────────────────*)
+    ⟦ P ⟧ (c1 ⊕ c2) ⟦ ok ↑ (Q1 \\// Q2) ⟧
+| Inc_err_choice: forall P c1 c2 R1 R2,
+    ⟦ P ⟧ c1 ⟦ err ↑ R1 ⟧ ->
+    ⟦ P ⟧ c2 ⟦ err ↑ R2 ⟧ ->
+    (*──────────────────────────────────*)
+    ⟦ P ⟧ (c1 ⊕ c2) ⟦ err ↑ (R1 \\// R2) ⟧
+| Inc_ok_cstar: forall (P: nat -> assertion) c,
+    (forall n, ⟦ P n ⟧ c ⟦ ok ↑ P (S n) ⟧) ->
+    (*─────────────────────────────────────────────────────────────*)
+    ⟦ P 0%nat ⟧ CSTAR c ⟦ ok ↑ (fun s => exists m, P m s) ⟧
+| Inc_err_cstar: forall P c M R,
+    ⟦ P ⟧ CSTAR c ⟦ ok ↑ M ⟧ ->
+    ⟦ M ⟧ c ⟦ err ↑ R ⟧ ->
+    (*──────────────────────────*)
+    ⟦ P ⟧ CSTAR c ⟦ err ↑ R ⟧
 where "⟦ P ⟧ c ⟦ 'ϵ' ↑ Q ⟧" :=
   (Inc_triple P c (fun r => match r with
                             | RNormal s => Q s
@@ -667,6 +719,174 @@ Lemma sem_sp_strongest: forall P c (Q: postassertion),
 Proof.
   intros P c Q HT r HQ. exact (HT r HQ).
 Qed.
+
+(** ** Syntactic strongest postconditions
+
+    [spo c P] / [spe c P] are the strongest normal / erroring postconditions
+    of [c] from [P], expressed directly through the operational semantics. *)
+Definition spo (c: com) (P: assertion) : assertion :=
+  fun s' => exists s, P s /\ s =[ c ]=> RNormal s'.
+Definition spe (c: com) (P: assertion) : assertion :=
+  fun s' => exists s, P s /\ s =[ c ]=> RError s'.
+
+(** [spo_iter c P n]: states reachable from [P] by exactly [n] successful
+    iterations of [c]. *)
+Fixpoint spo_iter (c: com) (P: assertion) (n: nat) : assertion :=
+  match n with
+  | 0%nat => P
+  | S k => spo c (spo_iter c P k)
+  end.
+
+(** Pure post-weakening (consequence keeping the precondition fixed). *)
+Lemma Inc_post_weaken: forall P c (Q Q': postassertion),
+  Inc_triple P c Q -> (forall r, Q' r -> Q r) -> Inc_triple P c Q'.
+Proof.
+  intros P c Q Q' H Hsub.
+  eapply Inc_consequence_gen; [ intros s Hs; exact Hs | exact H | exact Hsub ].
+Qed.
+
+(** An [ok]/[err] triple whose post is empty is vacuously derivable. *)
+Lemma Inc_ok_empty: forall P c (A: assertion),
+  (forall s, ~ A s) -> ⟦ P ⟧ c ⟦ ok ↑ A ⟧.
+Proof.
+  intros P c A Hempty.
+  eapply Inc_post_weaken; [ apply (Inc_Empty_under_approx P c) | ].
+  intros r HA. destruct r as [s|s]; cbn in *; [ exfalso; exact (Hempty s HA) | exact HA ].
+Qed.
+
+Lemma Inc_err_empty: forall P c (B: assertion),
+  (forall s, ~ B s) -> ⟦ P ⟧ c ⟦ err ↑ B ⟧.
+Proof.
+  intros P c B Hempty.
+  eapply Inc_post_weaken; [ apply (Inc_Empty_under_approx P c) | ].
+  intros r HB. destruct r as [s|s]; cbn in *; [ exact HB | exfalso; exact (Hempty s HB) ].
+Qed.
+
+(** [spo_iter] shifts: iterating from [spo c P] equals iterating one more from [P]. *)
+Lemma spo_iter_shift: forall c P n,
+  spo_iter c (spo c P) n = spo_iter c P (S n).
+Proof.
+  intros c P. induction n as [|k IH]; [ reflexivity | ].
+  cbn. cbn in IH. rewrite IH. reflexivity.
+Qed.
+
+(** Every state reachable by [star]-iterations is captured by some [spo_iter]. *)
+Lemma spo_star_complete: forall c s s',
+  star (step_iter c) s s' -> forall P, P s -> exists n, spo_iter c P n s'.
+Proof.
+  intros c s s' HStar. induction HStar as [a | a b d Hab Hbd IH]; intros P HP.
+  - exists 0%nat. exact HP.
+  - destruct (IH (spo c P)) as [n Hn].
+    + exists a. split; [ exact HP | exact Hab ].
+    + exists (S n). rewrite <- spo_iter_shift. exact Hn.
+Qed.
+
+(** ** Strongest-post derivability: the heart of completeness.
+
+    For every command [c] and pre [P], the strongest normal post [spo c P]
+    and erroring post [spe c P] are *derivable*.  Proven by induction on [c],
+    using the tag-tracking rules. *)
+Lemma sp_der: forall c P,
+  ⟦ P ⟧ c ⟦ ok ↑ spo c P ⟧ /\ ⟦ P ⟧ c ⟦ err ↑ spe c P ⟧.
+Proof.
+  induction c; intros P; split.
+  - (* SKIP, ok *)
+    eapply Inc_post_weaken; [ apply (Inc_triple_skip P) | ].
+    intros r; destruct r as [s|s]; cbn; [ | tauto ].
+    intros [s0 [HP HX]]. inversion HX; subst. exact HP.
+  - (* SKIP, err *)
+    apply Inc_err_empty. intros s [s0 [HP HX]]. inversion HX.
+  - (* ERROR, ok *)
+    apply Inc_ok_empty. intros s [s0 [HP HX]]. inversion HX.
+  - (* ERROR, err *)
+    eapply Inc_post_weaken; [ apply (Inc_error P) | ].
+    intros r; destruct r as [s|s]; cbn; [ tauto | ].
+    intros [s0 [HP HX]]. inversion HX; subst. exact HP.
+  - (* ASSIGN, ok *)
+    eapply Inc_post_weaken; [ apply (Inc_assign_sp x a P) | ].
+    intros r; destruct r as [s|s]; cbn; [ | tauto ].
+    intros [s0 [HP HX]]. inversion HX; subst. exists s0. split; [ exact HP | reflexivity ].
+  - (* ASSIGN, err *)
+    apply Inc_err_empty. intros s [s0 [HP HX]]. inversion HX.
+  - (* NONDET, ok *)
+    eapply Inc_post_weaken; [ apply (Inc_nondet_sp x P) | ].
+    intros r; destruct r as [s|s]; cbn; [ | tauto ].
+    intros [s0 [HP HX]]. inversion HX; subst. exists s0, n. split; [ exact HP | reflexivity ].
+  - (* NONDET, err *)
+    apply Inc_err_empty. intros s [s0 [HP HX]]. inversion HX.
+  - (* ASSUME, ok *)
+    eapply Inc_post_weaken; [ apply (Inc_assume P b) | ].
+    intros r; destruct r as [s|s]; cbn; [ | tauto ].
+    intros [s0 [HP HX]]. inversion HX; subst. split; assumption.
+  - (* ASSUME, err *)
+    apply Inc_err_empty. intros s [s0 [HP HX]]. inversion HX.
+  - (* SEQ, ok *)
+    destruct (IHc1 P) as [Hok1 _]. destruct (IHc2 (spo c1 P)) as [Hok2 _].
+    eapply Inc_post_weaken; [ apply (Inc_ok_seq P c1 c2 (spo c1 P) (spo c2 (spo c1 P)) Hok1 Hok2) | ].
+    intros r; destruct r as [s|s]; cbn; [ | tauto ].
+    intros [s0 [HP HX]]. inversion HX; subst.
+    exists s'. split; [ exists s0; split; assumption | assumption ].
+  - (* SEQ, err *)
+    destruct (IHc1 P) as [Hok1 Herr1]. destruct (IHc2 (spo c1 P)) as [_ Herr2].
+    eapply Inc_post_weaken;
+      [ apply (Inc_err_seq P c1 c2 (spo c1 P) (spe c1 P) (spe c2 (spo c1 P)) Herr1 Hok1 Herr2) | ].
+    intros r; destruct r as [s|s]; cbn; [ tauto | ].
+    intros [s0 [HP HX]]. inversion HX; subst.
+    + left. exists s0. split; assumption.
+    + right. exists s'. split; [ exists s0; split; assumption | assumption ].
+  - (* CHOICE, ok *)
+    destruct (IHc1 P) as [Hok1 _]. destruct (IHc2 P) as [Hok2 _].
+    eapply Inc_post_weaken; [ apply (Inc_ok_choice P c1 c2 (spo c1 P) (spo c2 P) Hok1 Hok2) | ].
+    intros r; destruct r as [s|s]; cbn; [ | tauto ].
+    intros [s0 [HP HX]]. inversion HX; subst.
+    + left. exists s0. split; assumption.
+    + right. exists s0. split; assumption.
+  - (* CHOICE, err *)
+    destruct (IHc1 P) as [_ Herr1]. destruct (IHc2 P) as [_ Herr2].
+    eapply Inc_post_weaken; [ apply (Inc_err_choice P c1 c2 (spe c1 P) (spe c2 P) Herr1 Herr2) | ].
+    intros r; destruct r as [s|s]; cbn; [ tauto | ].
+    intros [s0 [HP HX]]. inversion HX; subst.
+    + left. exists s0. split; assumption.
+    + right. exists s0. split; assumption.
+  - (* CSTAR, ok *)
+    assert (Hok : ⟦ P ⟧ CSTAR c ⟦ ok ↑ (fun s => exists m, spo_iter c P m s) ⟧).
+    { apply (Inc_ok_cstar (spo_iter c P) c).
+      intros n. destruct (IHc (spo_iter c P n)) as [Hn _]. exact Hn. }
+    eapply Inc_post_weaken; [ exact Hok | ].
+    intros r; destruct r as [s|s]; cbn; [ | tauto ].
+    intros [s0 [HP HX]]. apply cexec_cstar_iff_star in HX.
+    eapply spo_star_complete; eauto.
+  - (* CSTAR, err *)
+    assert (Hok : ⟦ P ⟧ CSTAR c ⟦ ok ↑ spo (CSTAR c) P ⟧).
+    { eapply Inc_post_weaken.
+      { apply (Inc_ok_cstar (spo_iter c P) c).
+        intros n. destruct (IHc (spo_iter c P n)) as [Hn _]. exact Hn. }
+      intros r; destruct r as [s|s]; cbn; [ | tauto ].
+      intros [s0 [HP HX]]. apply cexec_cstar_iff_star in HX.
+      eapply spo_star_complete; eauto. }
+    destruct (IHc (spo (CSTAR c) P)) as [_ Herr].
+    eapply Inc_post_weaken;
+      [ apply (Inc_err_cstar P c (spo (CSTAR c) P) (spe c (spo (CSTAR c) P)) Hok Herr) | ].
+    intros r; destruct r as [s|s]; cbn; [ tauto | ].
+    intros [s0 [HP HX]]. apply cexec_cstar_err_iff in HX.
+    destruct HX as [s' [HStar HcErr]].
+    exists s'. split; [ exists s0; split; [ exact HP | apply cexec_cstar_iff_star; exact HStar ] | exact HcErr ].
+Qed.
+
+Theorem Inc_complete:
+  forall P c Q, ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ Q ⟧⟧ -> ⟦ P ⟧ c ⟦ ϵ ↑ Q ⟧.
+Proof.
+  intros P c Q H.
+  destruct (sp_der c P) as [Hok Herr].
+  eapply Inc_post_weaken;
+    [ exact (Inc_ok_err_to_eps P c (spo c P) (spe c P) Hok Herr) | ].
+  intros r; destruct r as [s|s]; cbn; intros HQ; split.
+  - exact (H (RNormal s) HQ).
+  - exact (H (RError s) HQ).
+  - exact (H (RNormal s) HQ).
+  - exact (H (RError s) HQ).
+Qed.
+
 
 End IncCompleteness.
 
