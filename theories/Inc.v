@@ -38,13 +38,13 @@ Inductive Inc_triple: assertion -> com -> postassertion -> Prop :=
 | Inc_seq_err: forall P c1 c2 R,
     ⟦ P ⟧ c1 ⟦ err ↑ R ⟧ ->
     (*──────────────────────*)
-    ⟦ P ⟧   (c1 ;; c2) ⟦ ϵ ↑ R ⟧
+    ⟦ P ⟧   (c1 ;; c2) ⟦ err ↑ R ⟧
 | Inc_iterate_zero: forall P c,
     ⟦ P ⟧ CSTAR c ⟦ ok ↑ P ⟧
 | Inc_iterate_step: forall P c Q,
-    ⟦ Q ⟧ CSTAR c ;; c ⟦ ϵ ↑ P ⟧ ->
+    ⟦ P ⟧ (CSTAR c ;; c) ⟦ ϵ ↑ Q ⟧ ->
     (*─────────────────────────────*)
-    ⟦ P ⟧ CSTAR c ⟦ ϵ ↑ P ⟧
+    ⟦ P ⟧ CSTAR c ⟦ ϵ ↑ Q ⟧
 | Inc_error: forall P,
     ⟦ P ⟧ ERROR ⟦ err ↑ P ⟧
 | Inc_consequence: forall P P' c Q Q',
@@ -66,12 +66,13 @@ Inductive Inc_triple: assertion -> com -> postassertion -> Prop :=
     ⟦ P 0%nat ⟧ CSTAR c ⟦ ok ↑ (fun s => exists (m: nat), P m s) ⟧
 (* [p] x = e [ok: ∃x'. p[x'/x] ∧ x = e[x'/x]] [er: false] *)
 | Inc_assign_fwd: forall x a P,
-  (*────────────────────────────────────────────────────────────────────*)   
-  ⟦ P ⟧ ASSIGN x a ⟦ ok ↑ aexists (fun m => aexists (fun n =>
+  (*────────────────────────────────────────────────────────────────────*)
+  ⟦ P ⟧ ASSIGN x a ⟦ ok ↑ (fun s => x \in domf s) //\\ aexists (fun m => aexists (fun n =>
         aequal (VAR x) n //\\ aupdate x (CONST m) (P //\\ aequal a n))) ⟧
 | Inc_nondet: forall x P,
     (*─────────────────────────────────────────────────────────────*)
-    ⟦ P ⟧ NONDET x ⟦ ok ↑ (aexists (fun n => aupdate x (CONST n) P)) ⟧
+    ⟦ P ⟧ NONDET x ⟦ ok ↑ (fun s => x \in domf s)
+       //\\ aexists (fun n => aupdate x (CONST n) P) ⟧
 (* ── Sound, tag-tracking strongest-post rules added for completeness.
    Each mirrors a clause of the operational semantics [cexec]; together
    they let the strongest [ok]/[err] post of every command be derived.
@@ -144,8 +145,7 @@ and "⟦ P ⟧ c ⟦ 'err' ↑ Q ⟧" :=
 
 Notation "⟦ P ⟧ c ⟦ 'ok' ↑ Q1 ⟧ ⟦ 'err' ↑ Q2 ⟧" := (⟦ P ⟧ c ⟦ err ↑ Q1 ⟧  /\ ⟦ P ⟧ c ⟦ ok ↑ Q2 ⟧) (at level 90, c at next level).
 
-(* Definition IncTriple P c Q := forall st', Q st' -> exists st, P st /\ cexec st c st'.
- *)
+(* Semantics triple *)
 Definition IncTriple (P: assertion) (c: com) (Q: postassertion) : Prop :=
   forall r, Q r -> exists s, P s /\ cexec s c r.
 
@@ -185,6 +185,25 @@ Proof.
   - unfold aor, aimp; intros s [HP | HP]; exact HP.
   - apply Inc_disjunc; assumption.
   - unfold aor, aimp; auto.
+Qed.
+
+(** Semantic disjunction (precondition split), the [⟦⟦ ⟧⟧] counterpart of the
+    [Inc_disjunc] rule. *)
+Lemma inc_triple_disjunc: forall P1 P2 c Q1 Q2,
+    ⟦⟦ P1 ⟧⟧ c ⟦⟦ ϵ ↑ Q1 ⟧⟧ ->
+    ⟦⟦ P2 ⟧⟧ c ⟦⟦ ϵ ↑ Q2 ⟧⟧ ->
+    ⟦⟦ P1 \\// P2 ⟧⟧ c ⟦⟦ ϵ ↑ Q1 \\// Q2 ⟧⟧.
+Proof.
+  unfold aor. intros P1 P2 c Q1 Q2 H1 H2 r HQ.
+  destruct r as [s | s]; destruct HQ as [HQ1 | HQ2].
+  - destruct (H1 (RNormal s) HQ1) as (s0 & HP & EXEC).
+    exists s0. split; [ left; exact HP | exact EXEC ].
+  - destruct (H2 (RNormal s) HQ2) as (s0 & HP & EXEC).
+    exists s0. split; [ right; exact HP | exact EXEC ].
+  - destruct (H1 (RError s) HQ1) as (s0 & HP & EXEC).
+    exists s0. split; [ left; exact HP | exact EXEC ].
+  - destruct (H2 (RError s) HQ2) as (s0 & HP & EXEC).
+    exists s0. split; [ right; exact HP | exact EXEC ].
 Qed.
 
  (* [p]c[q1] ∧ [p]c[q2] ⇐⇒ [p]c[q1 ∨ q2] *)
@@ -640,13 +659,191 @@ Qed.
 End SPre.
 
 
+(** ── Semantic soundness lemmas for the tag-tracking rules ──────────────
+    Each is the [⟦⟦ ⟧⟧] (reachability) counterpart of one tag-tracking
+    constructor of [Inc_triple], mirroring a clause of [cexec].  They feed
+    the corresponding cases of [Inc_triple_sound]. *)
+
+(** Postassertion-level consequence: strengthen the precondition, shrink the
+    postassertion. *)
+Lemma inc_triple_consequence_gen: forall P P' c (Q Q': postassertion),
+    (P -->> P') ->
+    ⟦⟦ P ⟧⟧ c ⟦⟦ Q ⟧⟧ ->
+    (forall r, Q' r -> Q r) ->
+    ⟦⟦ P' ⟧⟧ c ⟦⟦ Q' ⟧⟧.
+Proof.
+  intros P P' c Q Q' HPP' HT Hsub r HQ'.
+  destruct (HT r (Hsub r HQ')) as (s & HPs & EXEC).
+  exists s. split; [ apply HPP'; exact HPs | exact EXEC ].
+Qed.
+
+(** An [ok] and an [err] reachability post combine into an [ϵ] post over
+    their conjunction. *)
+Lemma inc_triple_ok_err_to_eps: forall P c A B,
+    ⟦⟦ P ⟧⟧ c ⟦⟦ ok ↑ A ⟧⟧ ->
+    ⟦⟦ P ⟧⟧ c ⟦⟦ err ↑ B ⟧⟧ ->
+    ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ (A //\\ B) ⟧⟧.
+Proof.
+  intros P c A B HA HB r HAB.
+  destruct r as [s | s]; destruct HAB as [HAs HBs].
+  - exact (HA (RNormal s) HAs).
+  - exact (HB (RError s) HBs).
+Qed.
+
+(** Strongest normal post of an assignment. *)
+Lemma inc_triple_assign_sp: forall x a P,
+    ⟦⟦ P ⟧⟧ ASSIGN x a
+    ⟦⟦ ok ↑ (fun s' => exists s, P s /\ s' = update x (aeval a s) s) ⟧⟧.
+Proof.
+  intros x a P r HQ.
+  destruct r as [s' | s']; [ | exfalso; exact HQ ].
+  destruct HQ as [s [HP ->]].
+  exists s. split; [ exact HP | apply cexec_assign ].
+Qed.
+
+(** Strongest normal post of a nondeterministic assignment. *)
+Lemma inc_triple_nondet_sp: forall x P,
+    ⟦⟦ P ⟧⟧ NONDET x
+    ⟦⟦ ok ↑ (fun s' => exists s n, P s /\ s' = update x n s) ⟧⟧.
+Proof.
+  intros x P r HQ.
+  destruct r as [s' | s']; [ | exfalso; exact HQ ].
+  destruct HQ as [s [n [HP ->]]].
+  exists s. split; [ exact HP | apply cexec_nondet ].
+Qed.
+
+(** Normal sequencing. *)
+Lemma inc_triple_seq_ok: forall P c1 c2 Q1 Q2,
+    ⟦⟦ P ⟧⟧ c1 ⟦⟦ ok ↑ Q1 ⟧⟧ ->
+    ⟦⟦ Q1 ⟧⟧ c2 ⟦⟦ ok ↑ Q2 ⟧⟧ ->
+    ⟦⟦ P ⟧⟧ (c1 ;; c2) ⟦⟦ ok ↑ Q2 ⟧⟧.
+Proof.
+  intros P c1 c2 Q1 Q2 H1 H2 r HQ2.
+  destruct r as [s | s]; [ | exfalso; exact HQ2 ].
+  destruct (H2 (RNormal s) HQ2) as (s_mid & HQ1mid & EXEC2).
+  destruct (H1 (RNormal s_mid) HQ1mid) as (s_pre & HPpre & EXEC1).
+  exists s_pre. split; [ exact HPpre | eapply cexec_seq; eauto ].
+Qed.
+
+(** Erroring sequencing: the error arises in [c1], or after [c1] in [c2]. *)
+Lemma inc_triple_err_seq: forall P c1 c2 Q1 R1 R2,
+    ⟦⟦ P ⟧⟧ c1 ⟦⟦ err ↑ R1 ⟧⟧ ->
+    ⟦⟦ P ⟧⟧ c1 ⟦⟦ ok ↑ Q1 ⟧⟧ ->
+    ⟦⟦ Q1 ⟧⟧ c2 ⟦⟦ err ↑ R2 ⟧⟧ ->
+    ⟦⟦ P ⟧⟧ (c1 ;; c2) ⟦⟦ err ↑ (R1 \\// R2) ⟧⟧.
+Proof.
+  intros P c1 c2 Q1 R1 R2 HR1 HQ1 HR2 r HR.
+  destruct r as [s | s]; [ exfalso; exact HR | ].
+  destruct HR as [H1 | H2].
+  - destruct (HR1 (RError s) H1) as (s_pre & HP & EXEC1).
+    exists s_pre. split; [ exact HP | apply cexec_seq_error; exact EXEC1 ].
+  - destruct (HR2 (RError s) H2) as (s_mid & HQ1mid & EXEC2).
+    destruct (HQ1 (RNormal s_mid) HQ1mid) as (s_pre & HP & EXEC1).
+    exists s_pre. split; [ exact HP | eapply cexec_seq_error_right; eauto ].
+Qed.
+
+(** Normal choice. *)
+Lemma inc_triple_ok_choice: forall P c1 c2 Q1 Q2,
+    ⟦⟦ P ⟧⟧ c1 ⟦⟦ ok ↑ Q1 ⟧⟧ ->
+    ⟦⟦ P ⟧⟧ c2 ⟦⟦ ok ↑ Q2 ⟧⟧ ->
+    ⟦⟦ P ⟧⟧ (c1 ⊕ c2) ⟦⟦ ok ↑ (Q1 \\// Q2) ⟧⟧.
+Proof.
+  intros P c1 c2 Q1 Q2 H1 H2 r HQ.
+  destruct r as [s | s]; [ | exfalso; exact HQ ].
+  destruct HQ as [HQ1 | HQ2].
+  - destruct (H1 (RNormal s) HQ1) as (s0 & HP & EXEC).
+    exists s0. split; [ exact HP | apply cexec_choice_left; exact EXEC ].
+  - destruct (H2 (RNormal s) HQ2) as (s0 & HP & EXEC).
+    exists s0. split; [ exact HP | apply cexec_choice_right; exact EXEC ].
+Qed.
+
+(** Erroring choice. *)
+Lemma inc_triple_err_choice: forall P c1 c2 R1 R2,
+    ⟦⟦ P ⟧⟧ c1 ⟦⟦ err ↑ R1 ⟧⟧ ->
+    ⟦⟦ P ⟧⟧ c2 ⟦⟦ err ↑ R2 ⟧⟧ ->
+    ⟦⟦ P ⟧⟧ (c1 ⊕ c2) ⟦⟦ err ↑ (R1 \\// R2) ⟧⟧.
+Proof.
+  intros P c1 c2 R1 R2 H1 H2 r HR.
+  destruct r as [s | s]; [ exfalso; exact HR | ].
+  destruct HR as [HR1 | HR2].
+  - destruct (H1 (RError s) HR1) as (s0 & HP & EXEC).
+    exists s0. split; [ exact HP | apply cexec_choice_left; exact EXEC ].
+  - destruct (H2 (RError s) HR2) as (s0 & HP & EXEC).
+    exists s0. split; [ exact HP | apply cexec_choice_right; exact EXEC ].
+Qed.
+
+(** Normal iteration: an [ok] invariant family [P n] (one more successful
+    iteration each step) collects into [∃ m, P m]. *)
+Lemma inc_triple_ok_cstar: forall (P: nat -> assertion) c,
+    (forall n, ⟦⟦ P n ⟧⟧ c ⟦⟦ ok ↑ P (S n) ⟧⟧) ->
+    ⟦⟦ P 0%nat ⟧⟧ CSTAR c ⟦⟦ ok ↑ (fun s => exists m, P m s) ⟧⟧.
+Proof.
+  intros P c H r HQ.
+  destruct r as [s' | s']; [ | exfalso; exact HQ ].
+  destruct HQ as [m HPm].
+  revert s' HPm.
+  induction m as [| k IH]; intros s' HPm.
+  - exists s'. split; [ exact HPm | apply cexec_cstar_done ].
+  - destruct (H k (RNormal s') HPm) as (s_pre & HPk & EXEC_step).
+    destruct (IH s_pre HPk) as (s & HP0 & EXEC_iter).
+    exists s. split; [ exact HP0 | ].
+    apply cexec_cstar_iff_star.
+    apply cexec_cstar_iff_star in EXEC_iter.
+    eapply star_trans; [ exact EXEC_iter | ].
+    apply star_one. unfold step_iter. exact EXEC_step.
+Qed.
+
+(** Erroring iteration: reach an intermediate [M] by normal iterations, then
+    error in one more body execution. *)
+Lemma inc_triple_err_cstar: forall P c M R,
+    ⟦⟦ P ⟧⟧ CSTAR c ⟦⟦ ok ↑ M ⟧⟧ ->
+    ⟦⟦ M ⟧⟧ c ⟦⟦ err ↑ R ⟧⟧ ->
+    ⟦⟦ P ⟧⟧ CSTAR c ⟦⟦ err ↑ R ⟧⟧.
+Proof.
+  intros P c M R HM HR r HRr.
+  destruct r as [s | s]; [ exfalso; exact HRr | ].
+  destruct (HR (RError s) HRr) as (s_mid & HMmid & EXEC_c).
+  destruct (HM (RNormal s_mid) HMmid) as (s_pre & HP & EXEC_star).
+  exists s_pre. split; [ exact HP | ].
+  apply cexec_cstar_err_iff.
+  apply cexec_cstar_iff_star in EXEC_star.
+  exists s_mid. split; [ exact EXEC_star | exact EXEC_c ].
+Qed.
+
+
 Module IncSoundness.
 
 Theorem Inc_triple_sound: forall P c Q,
     (⟦ P ⟧ c ⟦ ϵ ↑ Q ⟧) ->
     ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ Q ⟧⟧.
 Proof.
-Admitted.
+  intros P c Q H. induction H.
+  - (* Inc_Empty_under_approx *) apply inc_triple_empty_under_approx.
+  - (* Inc_triple_skip *) apply inc_triple_skip.
+  - (* Inc_choice_l *) apply inc_triple_choice_l; assumption.
+  - (* Inc_choice_r *) apply inc_triple_choice_r; assumption.
+  - (* Inc_seq_ok *) eapply inc_triple_seq_normal; eassumption.
+  - (* Inc_seq_err *) apply inc_triple_seq_short_circuit; assumption.
+  - (* Inc_iterate_zero *) apply inc_triple_iterate_zero.
+  - (* Inc_iterate_step *) apply inc_triple_iterate_non_zero; assumption.
+  - (* Inc_error *) apply inc_triple_error.
+  - (* Inc_consequence *) eapply inc_triple_consequence; eassumption.
+  - (* Inc_assume *) apply inc_triple_assume.
+  - (* Inc_disjunc *) apply inc_triple_disjunc; assumption.
+  - (* Inc_backwards_variant *) apply inc_triple_backwards_variant; assumption.
+  - (* Inc_assign_fwd *) apply inc_triple_assign_fwd.
+  - (* Inc_nondet *) apply inc_triple_nondet.
+  - (* Inc_consequence_gen *) eapply inc_triple_consequence_gen; eassumption.
+  - (* Inc_ok_err_to_eps *) apply inc_triple_ok_err_to_eps; assumption.
+  - (* Inc_assign_sp *) apply inc_triple_assign_sp.
+  - (* Inc_nondet_sp *) apply inc_triple_nondet_sp.
+  - (* Inc_ok_seq *) eapply inc_triple_seq_ok; eassumption.
+  - (* Inc_err_seq *) eapply inc_triple_err_seq; eassumption.
+  - (* Inc_ok_choice *) apply inc_triple_ok_choice; assumption.
+  - (* Inc_err_choice *) apply inc_triple_err_choice; assumption.
+  - (* Inc_ok_cstar *) apply inc_triple_ok_cstar; assumption.
+  - (* Inc_err_cstar *) eapply inc_triple_err_cstar; eassumption.
+Qed.
 
 
 (* Principle of Agreement: [u]c[u'] ∧ (u ⇒ o) ∧ {o} c {o} ⇒ u' ⇒ o' *)
@@ -890,7 +1087,31 @@ Qed.
 
 End IncCompleteness.
 
-Module StrongestLiberalPostcondition.
+Module sp.
+
+  (** Annotated commands. *)
+  Inductive acom: Type :=
+  | SKIP                         (**r do nothing *)
+  | ERROR                        (**r interrupt the program *)
+  | ASSIGN (x: ident) (a: aexp)  (**r assignment: [v := a] *)
+  | NONDET (x: ident)            (**r non-deterministic assignment to [x] *)
+  | ASSUME (b: bexp)             (**r assume that [b] holds *)
+  | SEQ (c1: acom) (c2: acom)      (**r sequence: [c1; c2] *)
+  | CHOICE (c1: acom) (c2: acom)   (**r non-deterministic choice: [c1 + c2] *)
+  | CSTAR (Invariant: assertion) (c1: acom).             (**r non-deterministic iteration: [c1★] *)
+
+  Fixpoint erase (a : acom): com := 
+  match a with 
+  | SKIP => Imp.SKIP
+  | ERROR => Imp.ERROR
+  | ASSIGN x a => Imp.ASSIGN x a
+  | NONDET x => Imp.NONDET x
+  | ASSUME b => Imp.ASSUME b
+  | SEQ c1 c2 => Imp.SEQ (erase c1) (erase c2)
+  | CHOICE c1 c2 => Imp.CHOICE (erase c1) (erase c2)
+  | CSTAR _ c => Imp.CSTAR (erase c) (* main case, we remove the invariant annotation of the program *)
+  end.
+(* 
 
   (* Strongest Liberal Postcondition for normal executions *)
   Fixpoint slp_ok (P: assertion) (c: com) : assertion :=
@@ -996,6 +1217,6 @@ Module StrongestLiberalPostcondition.
     destruct r as [s | s].
     - apply (slp_ok_correct  P c (RNormal s) HQ).
     - apply (slp_err_correct P c (RError s) HQ).
-  Qed.
+  Qed. *)
 
-End StrongestLiberalPostcondition.
+End sp.
