@@ -125,6 +125,14 @@ Inductive Inc_triple: assertion -> com -> postassertion -> Prop :=
     ⟦ M ⟧ c ⟦ err ↑ R ⟧ ->
     (*──────────────────────────*)
     ⟦ P ⟧ CSTAR c ⟦ err ↑ R ⟧
+| Inc_combine_ok_err: forall P c A B,
+    ⟦ P ⟧ c ⟦ ok ↑ A ⟧ ->
+    ⟦ P ⟧ c ⟦ err ↑ B ⟧ ->
+    (*──────────────────────────*)
+    Inc_triple P c (fun r => match r with
+                             | RNormal s => A s
+                             | RError s => B s
+                             end)
 where "⟦ P ⟧ c ⟦ 'ϵ' ↑ Q ⟧" :=
   (Inc_triple P c (fun r => match r with
                             | RNormal s => Q s
@@ -144,6 +152,10 @@ and "⟦ P ⟧ c ⟦ 'err' ↑ Q ⟧" :=
 
 
 Notation "⟦ P ⟧ c ⟦ 'ok' ↑ Q1 ⟧ ⟦ 'err' ↑ Q2 ⟧" := (⟦ P ⟧ c ⟦ err ↑ Q1 ⟧  /\ ⟦ P ⟧ c ⟦ ok ↑ Q2 ⟧) (at level 90, c at next level).
+
+(* Postassertion-level triple: [Q] is a full [postassertion] (it inspects the
+   result tag), as opposed to the [ϵ/ok/err ↑] variants which lift an [assertion]. *)
+Notation "⟦ P ⟧ c ⟦ Q ⟧" := (Inc_triple P c Q) (at level 90, c at next level).
 
 (* Semantics triple *)
 Definition IncTriple (P: assertion) (c: com) (Q: postassertion) : Prop :=
@@ -810,6 +822,25 @@ Proof.
   exists s_mid. split; [ exact EXEC_star | exact EXEC_c ].
 Qed.
 
+(** Join an [ok]-post and an [err]-post (under the same precondition) into a
+    single tag-distinguishing postassertion: [A] on normal results, [B] on
+    faulting ones.  Semantically immediate — a result in the combined post is
+    either an [ok] state in [A] (reachable by [Hok]) or an [err] state in [B]
+    (reachable by [Herr]). *)
+Lemma inc_triple_combine_ok_err: forall P c A B,
+    ⟦⟦ P ⟧⟧ c ⟦⟦ ok ↑ A ⟧⟧ ->
+    ⟦⟦ P ⟧⟧ c ⟦⟦ err ↑ B ⟧⟧ ->
+    ⟦⟦ P ⟧⟧ c ⟦⟦ fun r => match r with
+                          | RNormal s => A s
+                          | RError s => B s
+                          end ⟧⟧.
+Proof.
+  intros P c A B Hok Herr r HQ.
+  destruct r as [s | s].
+  - exact (Hok (RNormal s) HQ).
+  - exact (Herr (RError s) HQ).
+Qed.
+
 
 Module IncSoundness.
 
@@ -843,6 +874,7 @@ Proof.
   - (* Inc_err_choice *) apply inc_triple_err_choice; assumption.
   - (* Inc_ok_cstar *) apply inc_triple_ok_cstar; assumption.
   - (* Inc_err_cstar *) eapply inc_triple_err_cstar; eassumption.
+  - (* Inc_combine_ok_err *) apply inc_triple_combine_ok_err; assumption.
 Qed.
 
 
@@ -1089,7 +1121,7 @@ End IncCompleteness.
 
 Module sp.
 
-  (** Annotated commands. *)
+  (** This is the language of commands where [WHILE] loops are annotated by an invariant [Inv]. *)
   Inductive acom: Type :=
   | SKIP                         (**r do nothing *)
   | ERROR                        (**r interrupt the program *)
@@ -1111,112 +1143,225 @@ Module sp.
   | CHOICE c1 c2 => Imp.CHOICE (erase c1) (erase c2)
   | CSTAR _ c => Imp.CSTAR (erase c) (* main case, we remove the invariant annotation of the program *)
   end.
-(* 
 
   (* Strongest Liberal Postcondition for normal executions *)
-  Fixpoint slp_ok (P: assertion) (c: com) : assertion :=
+
+  (** The exact reachable post over every result tag at once. *)
+  (** Strongest [ok]-post: the exact reachable store after *normal* termination. *)
+  Fixpoint slp_ok (P: assertion) (c: acom) : assertion :=
   match c with
-  | SKIP => P
+  | SKIP => fun s => P s
   | ERROR => ffalse
   | ASSUME b => atrue b //\\ P
   | ASSIGN x a => in_domf x //\\ aexists (fun (m: Z) => aexists (fun (n: Z) =>
       aequal (VAR x) n //\\ aupdate x (CONST m) (P //\\ aequal a n)))
   | NONDET x => in_domf x //\\ aforall (fun (m: aexp) => aupdate x m P)
-  | c1 ⊕ c2 => slp_ok P c1 \\// slp_ok P c2
-  | c1 ;; c2 => slp_ok (slp_ok P c1) c2
-  | CSTAR c => ffalse (* FIXME: Change IMP so that Cstar can carry invariant  *)
+  | CHOICE c1 c2 => slp_ok P c1 \\// slp_ok P c2
+  | SEQ c1 c2 => slp_ok (slp_ok P c1) c2
+  | CSTAR Inv c => Inv
   end.
 
-  (* Strongest Liberal Postcondition for error executions *)
-  Fixpoint slp_err (P: assertion) (c: com) : assertion :=
+  (** Strongest [err]-post: the exact reachable store after a *faulting* run. *)
+  Fixpoint slp_err (P: assertion) (c: acom) : assertion :=
   match c with
   | SKIP => ffalse
   | ERROR => P
   | ASSUME b => ffalse
   | ASSIGN x a => ffalse
   | NONDET x => ffalse
-  | c1 ⊕ c2 => slp_err P c1 \\// slp_err P c2
-  | c1 ;; c2 => slp_err P c1 \\// slp_err (slp_ok P c1) c2
-  | CSTAR c => ffalse (* FIXME: Change IMP so that Cstar can carry invariant  *)
+  | CHOICE c1 c2 => slp_err P c1 \\// slp_err P c2
+  | SEQ c1 c2 => slp_err P c1 \\// slp_err (slp_ok P c1) c2
+  | CSTAR Inv c => ffalse  (* see note: loop error case is handled via the invariant *)
   end.
 
-  Lemma slp_ok_correct: forall P c,
-    ⟦⟦ P ⟧⟧ c ⟦⟦ ok ↑ slp_ok P c ⟧⟧.
+  (** The strongest *postassertion*: it inspects the result tag and returns the
+      [ok] post on normal termination and the [err] post on faulting. This is
+      the [result -> Prop] value you asked for — built by matching on the
+      postassertion's own argument [r], not by running [cexec] (which is a
+      [Prop] relation and cannot be matched on inside a [Fixpoint]). *)
+  Definition sp (P: assertion) (c: acom) : postassertion :=
+    fun r => match r with
+             | RNormal s => slp_ok P c s
+             | RError s  => slp_err P c s
+             end.
+
+  (** [iter_slp_ok P c n] is the strongest [ok]-post after exactly [n]
+      iterations of [c] from [P].  The union over all [n] is the strongest
+      post of the loop, which an annotated invariant must under-approximate. *)
+  Fixpoint iter_slp_ok (P: assertion) (c: acom) (n: nat) : assertion :=
+    match n with
+    | O => P
+    | S k => slp_ok (iter_slp_ok P c k) c
+    end.
+
+(** Well-formedness of the loop annotations in [c]: every [CSTAR Inv body]
+    carries an invariant [Inv] that under-approximates the union of the
+    [iter_slp_ok] iterates (the nat-indexed variant), and whose body is
+    itself well-formed at each iterate and at [Inv].  This is exactly the
+    side condition that makes the loop case of [slp_ok_correct] provable. *)
+Fixpoint vcond (P: assertion) (c: acom) : Prop :=
+  match c with
+  | SKIP => True
+  | ERROR => True
+  | ASSUME _ => True
+  | ASSIGN _ _ => True
+  | NONDET _ => True
+  | CHOICE c1 c2 => vcond P c1 /\ vcond P c2
+  | SEQ c1 c2 => vcond P c1 /\ vcond (slp_ok P c1) c2
+  | CSTAR Inv body =>
+      (Inv -->> (fun s => exists m, iter_slp_ok P body m s))
+      /\ (forall m, vcond (iter_slp_ok P body m) body)
+      /\ vcond Inv body
+  end.
+
+  Definition vcgen (P: assertion) (c: acom) (Q: postassertion) : Prop :=
+    vcond P c /\ (Q --* sp P c).
+
+  (* We reuse the semantic strongest posts [spo]/[spe] and the derivability
+     result [sp_der] from the completeness development. *)
+  Import IncCompleteness.
+
+  (** [spo] is monotone in its precondition. *)
+  Lemma spo_mono: forall c (P P': assertion),
+    (forall s, P s -> P' s) -> forall s, spo c P s -> spo c P' s.
   Proof.
-    intros P c. revert P.
-    induction c; intros P r HQ; cbn [slp_ok] in HQ.
-    - (* SKIP *) destruct r as [s|s]; [|contradiction].
-      exists s. split; [exact HQ | apply cexec_skip].
-    - (* ERROR *) destruct r as [s|s]; contradiction.
-    - (* ASSIGN x a *) destruct r as [s|s]; [|contradiction].
-      destruct HQ as [Hdom [m [n [Heq_x [HP Heq_a]]]]].
-      cbn in HP, Heq_a, Heq_x.
+    intros c P P' Hsub s [s0 [HP HX]]. exists s0. split; [ apply Hsub; exact HP | exact HX ].
+  Qed.
+
+  (** Every state reached by [n] successful iterations of [c] is reachable from
+      [P] through the reflexive-transitive closure of one body step. *)
+  Lemma spo_iter_star: forall c P m s,
+    spo_iter c P m s -> exists s0, P s0 /\ star (step_iter c) s0 s.
+  Proof.
+    intros c P m. induction m as [|k IH]; intros s Hit.
+    - exists s. split; [ exact Hit | apply star_refl ].
+    - cbn [spo_iter] in Hit. unfold spo in Hit. destruct Hit as [smid [Hk HX]].
+      destruct (IH smid Hk) as [s0 [HP HSt]].
+      exists s0. split; [ exact HP | ].
+      eapply star_trans; [ exact HSt | apply star_one; unfold step_iter; exact HX ].
+  Qed.
+
+  (** Hence such a state is in the strongest [ok]-post of [CSTAR c]. *)
+  Lemma spo_iter_to_cstar: forall c P m s,
+    spo_iter c P m s -> spo (Imp.CSTAR c) P s.
+  Proof.
+    intros c P m s Hit. destruct (spo_iter_star c P m s Hit) as [s0 [HP HSt]].
+    unfold spo. exists s0. split; [ exact HP | apply cexec_cstar_of_star; exact HSt ].
+  Qed.
+
+  (** The syntactic [ok]-post under-approximates the semantic one. *)
+  Lemma slp_ok_spo: forall c P, vcond P c -> forall s, slp_ok P c s -> spo (erase c) P s.
+  Proof.
+    induction c as [ | | x a | x | b | c1 IHc1 c2 IHc2 | c1 IHc1 c2 IHc2 | Inv body IHbody ];
+      intros P Hv s Hslp; cbn [erase].
+    - (* SKIP *) cbn [slp_ok] in Hslp. unfold spo. exists s. split; [ exact Hslp | apply cexec_skip ].
+    - (* ERROR *) cbn [slp_ok] in Hslp. contradiction.
+    - (* ASSIGN x a *) cbn [slp_ok] in Hslp.
+      destruct Hslp as [Hdom [m [n [Heq_x [HP Heq_a]]]]].
       unfold aequal in Heq_x, Heq_a. cbn in Heq_x, Heq_a.
-      exists (update x m s). split; [ exact HP | ].
+      unfold spo. exists (update x m s). split; [ exact HP | ].
       replace s with (update x (aeval a (update x m s)) (update x m s)) at 2.
       + apply cexec_assign.
       + rewrite Heq_a, update_shadow, <- Heq_x. apply update_get. exact Hdom.
-    - (* NONDET x *) destruct r as [s|s]; [|contradiction].
-      destruct HQ as [Hdom HQ].
-      exists (update x 0 s). split.
+    - (* NONDET x *) cbn [slp_ok] in Hslp.
+      destruct Hslp as [Hdom HQ].
+      unfold spo. exists (update x 0 s). split.
       + apply (HQ (CONST 0)).
       + replace s with (update x (s x) (update x 0 s)) at 2.
         * apply cexec_nondet.
         * rewrite update_shadow. apply update_get. exact Hdom.
-    - (* ASSUME b *) destruct r as [s|s]; [|contradiction].
-      destruct HQ as [Hb HP].
-      exists s. split; [exact HP | apply cexec_assume; exact Hb].
-    - (* SEQ c1 c2 *) destruct r as [s|s]; [|contradiction].
-      destruct (IHc2 (slp_ok P c1) (RNormal s) HQ) as (s_mid & HQmid & EXEC2).
-      destruct (IHc1 P (RNormal s_mid) HQmid) as (s_pre & HPpre & EXEC1).
-      exists s_pre. split; [ exact HPpre | eapply cexec_seq; eauto ].
-    - (* CHOICE c1 c2 *) destruct r as [s|s]; [|contradiction].
-      destruct HQ as [H1 | H2].
-      + destruct (IHc1 P (RNormal s) H1) as (s0 & HP & EXEC).
-        exists s0. split; [ exact HP | apply cexec_choice_left; exact EXEC ].
-      + destruct (IHc2 P (RNormal s) H2) as (s0 & HP & EXEC).
-        exists s0. split; [ exact HP | apply cexec_choice_right; exact EXEC ].
-    - (* CSTAR c *) destruct r as [s|s]; contradiction.
+    - (* ASSUME b *) cbn [slp_ok] in Hslp.
+      destruct Hslp as [Hb HP].
+      unfold spo. exists s. split; [ exact HP | apply cexec_assume; exact Hb ].
+    - (* SEQ c1 c2 *) cbn [slp_ok] in Hslp. cbn [vcond] in Hv. destruct Hv as [Hv1 Hv2].
+      pose proof (IHc2 (slp_ok P c1) Hv2 s Hslp) as Hspo2. unfold spo in Hspo2.
+      destruct Hspo2 as [smid [Hmid HX2]].
+      pose proof (IHc1 P Hv1 smid Hmid) as Hspo1. unfold spo in Hspo1.
+      destruct Hspo1 as [s0 [HP HX1]].
+      unfold spo. exists s0. split; [ exact HP | eapply cexec_seq; [ exact HX1 | exact HX2 ] ].
+    - (* CHOICE c1 c2 *) cbn [slp_ok] in Hslp. cbn [vcond] in Hv. destruct Hv as [Hv1 Hv2].
+      destruct Hslp as [H1 | H2].
+      + pose proof (IHc1 P Hv1 s H1) as Hspo. unfold spo in Hspo. destruct Hspo as [s0 [HP HX]].
+        unfold spo. exists s0. split; [ exact HP | apply cexec_choice_left; exact HX ].
+      + pose proof (IHc2 P Hv2 s H2) as Hspo. unfold spo in Hspo. destruct Hspo as [s0 [HP HX]].
+        unfold spo. exists s0. split; [ exact HP | apply cexec_choice_right; exact HX ].
+    - (* CSTAR Inv body *) cbn [slp_ok] in Hslp. cbn [vcond] in Hv.
+      destruct Hv as [Hinv [Hiter Hinvbody]].
+      apply Hinv in Hslp. destruct Hslp as [m Hm].
+      assert (Hsub: forall k s', iter_slp_ok P body k s' -> spo_iter (erase body) P k s').
+      { induction k as [|j IHj]; intros s' Hk.
+        - exact Hk.
+        - cbn [iter_slp_ok] in Hk. cbn [spo_iter].
+          pose proof (IHbody (iter_slp_ok P body j) (Hiter j) s' Hk) as Hspo.
+          eapply spo_mono; [ exact IHj | exact Hspo ]. }
+      apply (spo_iter_to_cstar (erase body) P m s). apply Hsub. exact Hm.
   Qed.
 
-  Lemma slp_err_correct: forall P c,
-    ⟦⟦ P ⟧⟧ c ⟦⟦ err ↑ slp_err P c ⟧⟧.
+  (** The syntactic [err]-post under-approximates the semantic one. *)
+  Lemma slp_err_spe: forall c P, vcond P c -> forall s, slp_err P c s -> spe (erase c) P s.
   Proof.
-    intros P c. revert P.
-    induction c; intros P r HQ; cbn [slp_err] in HQ.
-    - (* SKIP *) destruct r as [s|s]; contradiction.
-    - (* ERROR *) destruct r as [s|s]; [contradiction|].
-      exists s. split; [exact HQ | apply cexec_error].
-    - (* ASSIGN *) destruct r as [s|s]; contradiction.
-    - (* NONDET *) destruct r as [s|s]; contradiction.
-    - (* ASSUME *) destruct r as [s|s]; contradiction.
-    - (* SEQ c1 c2 *) destruct r as [s|s]; [contradiction|].
-      destruct HQ as [H1 | H2].
-      + destruct (IHc1 P (RError s) H1) as (s_pre & HP & EXEC1).
-        exists s_pre. split; [exact HP | apply cexec_seq_error; exact EXEC1].
-      + destruct (IHc2 (slp_ok P c1) (RError s) H2) as (s_mid & HQmid & EXEC2).
-        destruct (slp_ok_correct P c1 (RNormal s_mid) HQmid) as (s_pre & HP & EXEC1).
-        exists s_pre. split; [exact HP | eapply cexec_seq_error_right; eauto].
-    - (* CHOICE c1 c2 *) destruct r as [s|s]; [contradiction|].
-      destruct HQ as [H1 | H2].
-      + destruct (IHc1 P (RError s) H1) as (s0 & HP & EXEC).
-        exists s0. split; [exact HP | apply cexec_choice_left; exact EXEC].
-      + destruct (IHc2 P (RError s) H2) as (s0 & HP & EXEC).
-        exists s0. split; [exact HP | apply cexec_choice_right; exact EXEC].
-    - (* CSTAR c *) destruct r as [s|s]; contradiction.
+    induction c as [ | | x a | x | b | c1 IHc1 c2 IHc2 | c1 IHc1 c2 IHc2 | Inv body IHbody ];
+      intros P Hv s Hslp; cbn [erase].
+    - (* SKIP *) cbn [slp_err] in Hslp. contradiction.
+    - (* ERROR *) cbn [slp_err] in Hslp. unfold spe. exists s. split; [ exact Hslp | apply cexec_error ].
+    - (* ASSIGN *) cbn [slp_err] in Hslp. contradiction.
+    - (* NONDET *) cbn [slp_err] in Hslp. contradiction.
+    - (* ASSUME *) cbn [slp_err] in Hslp. contradiction.
+    - (* SEQ c1 c2 *) cbn [slp_err] in Hslp. cbn [vcond] in Hv. destruct Hv as [Hv1 Hv2].
+      destruct Hslp as [H1 | H2].
+      + pose proof (IHc1 P Hv1 s H1) as Hspe. unfold spe in Hspe. destruct Hspe as [s0 [HP HX]].
+        unfold spe. exists s0. split; [ exact HP | apply cexec_seq_error; exact HX ].
+      + pose proof (IHc2 (slp_ok P c1) Hv2 s H2) as Hspe. unfold spe in Hspe.
+        destruct Hspe as [smid [Hmid HX2]].
+        pose proof (slp_ok_spo c1 P Hv1 smid Hmid) as Hspo. unfold spo in Hspo.
+        destruct Hspo as [s0 [HP HX1]].
+        unfold spe. exists s0. split; [ exact HP | eapply cexec_seq_error_right; [ exact HX1 | exact HX2 ] ].
+    - (* CHOICE c1 c2 *) cbn [slp_err] in Hslp. cbn [vcond] in Hv. destruct Hv as [Hv1 Hv2].
+      destruct Hslp as [H1 | H2].
+      + pose proof (IHc1 P Hv1 s H1) as Hspe. unfold spe in Hspe. destruct Hspe as [s0 [HP HX]].
+        unfold spe. exists s0. split; [ exact HP | apply cexec_choice_left; exact HX ].
+      + pose proof (IHc2 P Hv2 s H2) as Hspe. unfold spe in Hspe. destruct Hspe as [s0 [HP HX]].
+        unfold spe. exists s0. split; [ exact HP | apply cexec_choice_right; exact HX ].
+    - (* CSTAR *) cbn [slp_err] in Hslp. contradiction.
   Qed.
 
-  Theorem slp_correct: forall P c,
-    let Q : postassertion := fun r => match r with
-                                      | RNormal s => slp_ok  P c s
-                                      | RError  s => slp_err P c s
-                                      end in
-    ⟦⟦ P ⟧⟧ c ⟦⟦  Q ⟧⟧.
+  (** The annotated [ok]-post is a derivable incorrectness post. *)
+  Lemma slp_ok_sound: forall c P, vcond P c -> ⟦ P ⟧ erase c ⟦ ok ↑ slp_ok P c ⟧.
   Proof.
-    intros P c Q r HQ. subst Q. cbn in HQ.
-    destruct r as [s | s].
-    - apply (slp_ok_correct  P c (RNormal s) HQ).
-    - apply (slp_err_correct P c (RError s) HQ).
-  Qed. *)
+    intros c P Hv.
+    destruct (sp_der (erase c) P) as [Hok _].
+    eapply Inc_post_weaken; [ exact Hok | ].
+    intros r; destruct r as [s|s]; cbn;
+      [ intros Hslp; exact (slp_ok_spo c P Hv s Hslp) | tauto ].
+  Qed.
+
+  (** The annotated [err]-post is a derivable incorrectness post. *)
+  Lemma slp_err_sound: forall c P, vcond P c -> ⟦ P ⟧ erase c ⟦ err ↑ slp_err P c ⟧.
+  Proof.
+    intros c P Hv.
+    destruct (sp_der (erase c) P) as [_ Herr].
+    eapply Inc_post_weaken; [ exact Herr | ].
+    intros r; destruct r as [s|s]; cbn;
+      [ tauto | intros Hslp; exact (slp_err_spe c P Hv s Hslp) ].
+  Qed.
+
+  (** Soundness of the combined strongest postassertion: under the loop side
+      conditions [vcond], the triple [⟦ P ⟧ erase c ⟦ sp P c ⟧] is derivable. *)
+  Lemma sp_sound: forall c P,
+    vcond P c -> ⟦ P ⟧ erase c ⟦ sp P c ⟧.
+  Proof.
+    intros c P Hv.
+    exact (Inc_combine_ok_err P (erase c) (slp_ok P c) (slp_err P c)
+             (slp_ok_sound c P Hv) (slp_err_sound c P Hv)).
+  Qed.
+
+  (** Soundness of the verification-condition generator: if the side conditions
+      hold and [Q] under-approximates the strongest post, then [⟦ P ⟧ erase c ⟦ Q ⟧]. *)
+  Theorem vcgen_sound: forall P c Q,
+  vcgen P c Q -> ⟦ P ⟧ erase c ⟦ Q ⟧.
+  Proof.
+    intros P c Q [Hv Himp].
+    eapply Inc_post_weaken; [ exact (sp_sound c P Hv) | exact Himp ].
+  Qed.
 
 End sp.
