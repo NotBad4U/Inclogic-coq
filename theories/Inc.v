@@ -84,11 +84,6 @@ Inductive Inc_triple: assertion -> com -> postassertion -> Prop :=
     (forall r, Q' r -> Q r) ->
     (*──────────────────*)
     Inc_triple P' c Q'
-| Inc_ok_err_to_eps: forall P c A B,
-    ⟦ P ⟧ c ⟦ ok ↑ A ⟧ ->
-    ⟦ P ⟧ c ⟦ err ↑ B ⟧ ->
-    (*──────────────────────────*)
-    ⟦ P ⟧ c ⟦ ϵ ↑ (A //\\ B) ⟧
 | Inc_assign_sp: forall x a P,
     (*────────────────────────────────────────────────────────────────────*)
     ⟦ P ⟧ ASSIGN x a ⟦ ok ↑ (fun s' => exists s, P s /\ s' = update x (aeval a s) s) ⟧
@@ -689,19 +684,6 @@ Proof.
   exists s. split; [ apply HPP'; exact HPs | exact EXEC ].
 Qed.
 
-(** An [ok] and an [err] reachability post combine into an [ϵ] post over
-    their conjunction. *)
-Lemma inc_triple_ok_err_to_eps: forall P c A B,
-    ⟦⟦ P ⟧⟧ c ⟦⟦ ok ↑ A ⟧⟧ ->
-    ⟦⟦ P ⟧⟧ c ⟦⟦ err ↑ B ⟧⟧ ->
-    ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ (A //\\ B) ⟧⟧.
-Proof.
-  intros P c A B HA HB r HAB.
-  destruct r as [s | s]; destruct HAB as [HAs HBs].
-  - exact (HA (RNormal s) HAs).
-  - exact (HB (RError s) HBs).
-Qed.
-
 (** Strongest normal post of an assignment. *)
 Lemma inc_triple_assign_sp: forall x a P,
     ⟦⟦ P ⟧⟧ ASSIGN x a
@@ -841,6 +823,28 @@ Proof.
   - exact (Herr (RError s) HQ).
 Qed.
 
+(** An [ok] and an [err] reachability post combine into an [ϵ] post over
+    their conjunction.  Derived from [inc_triple_combine_ok_err] (which builds
+    the tag-distinguishing post) by shrinking that post to [A //\\ B] via
+    [inc_triple_consequence_gen]. *)
+Lemma inc_triple_ok_err_to_eps: forall P c A B,
+    ⟦⟦ P ⟧⟧ c ⟦⟦ ok ↑ A ⟧⟧ ->
+    ⟦⟦ P ⟧⟧ c ⟦⟦ err ↑ B ⟧⟧ ->
+    ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ (A //\\ B) ⟧⟧.
+Proof.
+  intros P c A B HA HB.
+  eapply inc_triple_consequence_gen with
+    (P := P)
+    (Q := fun r => match r with
+                   | RNormal s => A s
+                   | RError s => B s
+                   end).
+  - intros s Hs; exact Hs.
+  - exact (inc_triple_combine_ok_err P c A B HA HB).
+  - intros r HAB; destruct r as [s | s]; destruct HAB as [HAs HBs];
+      [ exact HAs | exact HBs ].
+Qed.
+
 
 Module IncSoundness.
 
@@ -865,7 +869,6 @@ Proof.
   - (* Inc_assign_fwd *) apply inc_triple_assign_fwd.
   - (* Inc_nondet *) apply inc_triple_nondet.
   - (* Inc_consequence_gen *) eapply inc_triple_consequence_gen; eassumption.
-  - (* Inc_ok_err_to_eps *) apply inc_triple_ok_err_to_eps; assumption.
   - (* Inc_assign_sp *) apply inc_triple_assign_sp.
   - (* Inc_nondet_sp *) apply inc_triple_nondet_sp.
   - (* Inc_ok_seq *) eapply inc_triple_seq_ok; eassumption.
@@ -1108,10 +1111,8 @@ Proof.
   intros P c Q H.
   destruct (sp_der c P) as [Hok Herr].
   eapply Inc_post_weaken;
-    [ exact (Inc_ok_err_to_eps P c (spo c P) (spe c P) Hok Herr) | ].
-  intros r; destruct r as [s|s]; cbn; intros HQ; split.
-  - exact (H (RNormal s) HQ).
-  - exact (H (RError s) HQ).
+    [ exact (Inc_combine_ok_err P c (spo c P) (spe c P) Hok Herr) | ].
+  intros r; destruct r as [s|s]; cbn; intros HQ.
   - exact (H (RNormal s) HQ).
   - exact (H (RError s) HQ).
 Qed.
