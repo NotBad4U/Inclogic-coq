@@ -573,33 +573,65 @@ where "⦇ P ⦈ c ⦇ Q ⦈" :=
 
 
 
-Definition Triple (P: assertion) (c: com) (Q: assertion) :=
-  forall s, P s -> exists s', cexec s c (RNormal s') /\ Q s'.
+(** Demonic total-correctness ("strong") Hoare triple: from every [P]-state,
+    [c] terminates ([exists r]), never errors, and *every* result is a normal
+    state satisfying [Q] *)
+Definition Triple (P: assertion) (c: com) (Q: assertion) : Prop :=
+  forall s, P s ->
+    (exists r, cexec s c r) /\
+    (forall r, cexec s c r -> exists s', r = RNormal s' /\ Q s').
 
 Notation "⦇⦇ P ⦈⦈ c ⦇⦇ Q ⦈⦈" := (Triple P c Q) (at level 90, c at next level).
 
+(** Termination half. *)
+Lemma Triple_terminates: forall P c Q s, Triple P c Q -> P s -> exists r, cexec s c r.
+Proof. intros P c Q s HT HP. apply (HT s HP). Qed.
 
-Lemma Triple_skip: forall P, 
+(** Safety half is exactly the (error-aware) weak triple. *)
+Lemma Triple_safe: forall P c Q, Triple P c Q -> triple P c Q.
+Proof. intros P c Q HT s r EXEC HP. destruct (HT s HP) as [_ Hsafe]. exact (Hsafe r EXEC). Qed.
+
+(** Demonic implies angelic: a unique terminating normal run reaching [Q].
+    (Under nondeterminism this is strictly stronger than the old definition.) *)
+Lemma Triple_func: forall P c Q s,
+  Triple P c Q -> P s -> exists s', cexec s c (RNormal s') /\ Q s'.
+Proof.
+  intros P c Q s HT HP. destruct (HT s HP) as [[r Hr] Hsafe].
+  destruct (Hsafe r Hr) as [s' [-> HQ]]. exists s'. split; [ exact Hr | exact HQ ].
+Qed.
+
+(** Assemble a demonic triple from termination + the weak (safety) triple. *)
+Lemma Triple_intro: forall P c Q,
+  (forall s, P s -> exists r, cexec s c r) -> triple P c Q -> Triple P c Q.
+Proof.
+  intros P c Q Hterm Hsafe s HP.
+  split; [ apply Hterm; exact HP | intros r Hr; exact (Hsafe s r Hr HP) ].
+Qed.
+
+Lemma Triple_skip: forall P,
   ⦇⦇ P ⦈⦈ SKIP ⦇⦇ P ⦈⦈.
 Proof.
-  unfold Triple; intros. exists s. split; [ apply cexec_skip | exact H ].
+  intros P. apply Triple_intro; [ | apply triple_skip ].
+  intros s HP. exists (RNormal s). apply cexec_skip.
 Qed.
 
 Lemma Triple_assign: forall P x a,
       ⦇⦇ aupdate x a P ⦈⦈ ASSIGN x a ⦇⦇ P ⦈⦈.
 Proof.
-  unfold Triple, aupdate; intros P x a s PRE.
-  exists (update x (aeval a s) s). split; [ apply cexec_assign | exact PRE ].
+  intros P x a. apply Triple_intro; [ | apply triple_assign ].
+  intros s PRE. exists (RNormal (update x (aeval a s) s)). apply cexec_assign.
 Qed.
 
 Lemma Triple_seq: forall P Q R c1 c2,
       ⦇⦇ P ⦈⦈ c1 ⦇⦇ Q ⦈⦈ -> ⦇⦇ Q ⦈⦈ c2 ⦇⦇ R ⦈⦈ ->
       ⦇⦇ P ⦈⦈ c1;;c2 ⦇⦇ R ⦈⦈.
 Proof.
-  unfold Triple; intros P Q R c1 c2 H1 H2 s PRE.
-  destruct (H1 s PRE) as (sm & EXEC1 & QSx).
-  destruct (H2 sm QSx) as (sf & EXEC2 & RSf).
-  exists sf. split; [ apply cexec_seq with sm; assumption | exact RSf ].
+  intros P Q R c1 c2 H1 H2. apply Triple_intro.
+  - intros s PRE. destruct (Triple_func _ _ _ s H1 PRE) as (sm & E1 & HQ).
+    destruct (Triple_terminates _ _ _ sm H2 HQ) as [r2 E2]. destruct r2 as [sf | sf].
+    + exists (RNormal sf). eapply cexec_seq; eassumption.
+    + exists (RError sf). eapply cexec_seq_error_right; eassumption.
+  - eapply triple_seq; [ apply (Triple_safe _ _ _ H1) | apply (Triple_safe _ _ _ H2) ].
 Qed.
 
 Lemma Triple_ifthenelse: forall P Q b c1 c2,
@@ -607,17 +639,18 @@ Lemma Triple_ifthenelse: forall P Q b c1 c2,
       ⦇⦇ afalse b //\\ P ⦈⦈ c2 ⦇⦇ Q ⦈⦈ ->
       ⦇⦇ P ⦈⦈ IF b THEN c1 ELSE c2 END ⦇⦇ Q ⦈⦈.
 Proof.
-  unfold Triple, aand, atrue, afalse; intros P Q b c1 c2 H1 H2 s PRE.
-  destruct (beval b s) eqn:Hb.
-  - destruct (H1 s (conj Hb PRE)) as (s' & EXEC & QS').
-    exists s'. split; [ | exact QS' ].
-    apply cexec_choice_left.
-    apply cexec_seq with s; [ apply cexec_assume; exact Hb | exact EXEC ].
-  - destruct (H2 s (conj Hb PRE)) as (s' & EXEC & QS').
-    exists s'. split; [ | exact QS' ].
-    apply cexec_choice_right.
-    apply cexec_seq with s;
-      [ apply cexec_assume; cbn; rewrite Hb; reflexivity | exact EXEC ].
+  intros P Q b c1 c2 H1 H2. apply Triple_intro.
+  - intros s PRE. destruct (beval b s) eqn:Hb.
+    + assert (Hpre : (atrue b //\\ P) s) by (split; [ exact Hb | exact PRE ]).
+      destruct (Triple_func _ _ _ s H1 Hpre) as (s' & EXEC & _).
+      exists (RNormal s'). apply cexec_choice_left.
+      apply cexec_seq with s; [ apply cexec_assume; exact Hb | exact EXEC ].
+    + assert (Hpre : (afalse b //\\ P) s) by (split; [ exact Hb | exact PRE ]).
+      destruct (Triple_func _ _ _ s H2 Hpre) as (s' & EXEC & _).
+      exists (RNormal s'). apply cexec_choice_right.
+      apply cexec_seq with s;
+        [ apply cexec_assume; cbn; rewrite Hb; reflexivity | exact EXEC ].
+  - apply triple_ifthenelse; [ apply (Triple_safe _ _ _ H1) | apply (Triple_safe _ _ _ H2) ].
 Qed.
 
 Lemma Triple_consequence: forall P Q P' Q' c,
@@ -626,9 +659,9 @@ Lemma Triple_consequence: forall P Q P' Q' c,
       Q -->> Q' ->
       ⦇⦇ P' ⦈⦈ c ⦇⦇ Q' ⦈⦈.
 Proof.
-  unfold Triple, aimp; intros P Q P' Q' c HT HP'P HQQ' s PRE.
-  destruct (HT s (HP'P s PRE)) as (s' & EXEC & QS').
-  exists s'. split; [ exact EXEC | apply HQQ', QS' ].
+  intros P Q P' Q' c HT HP'P HQQ'. apply Triple_intro.
+  - intros s PRE. apply (Triple_terminates _ _ _ s HT (HP'P s PRE)).
+  - eapply triple_consequence; [ apply (Triple_safe _ _ _ HT) | exact HP'P | exact HQQ' ].
 Qed.
 
 
@@ -640,63 +673,73 @@ Lemma Triple_while: forall P variant b c,
   ->
      ⦇⦇ P ⦈⦈ WHILE b DO c END ⦇⦇ P //\\ afalse b ⦈⦈.
 Proof.
-  unfold Triple, aand, atrue, afalse, aequal, alessthan.
-  intros P variant b c H s0 PRE0.
-  (* Helper: from any P-state with non-negative variant, the iterated body
-     [(ASSUME b ;; c) ★] terminates in a state where [P] still holds and [b]
-     is false.  Proved by induction on a nat upper bound for [Z.to_nat] of
-     the variant. *)
-  assert (HELP: forall n s,
-              0 <= aeval variant s ->
-              (Z.to_nat (aeval variant s) <= n)%nat ->
-              P s ->
-              exists sf,
-                cexec s (CSTAR (ASSUME b ;; c)) (RNormal sf) /\
-                P sf /\ beval b sf = false).
-  { induction n as [|n IH]; intros s Hvnn Hn PS.
-    - (* n = 0: with 0 <= variant and Z.to_nat variant <= 0 we get variant = 0 *)
-      assert (Hzero : aeval variant s = 0).
-      { destruct (aeval variant s) as [|p|p]; lia. }
-      destruct (beval b s) eqn:Hb.
-      + (* b = true: H with v=0 demands [0 <= variant s1 < 0], contradiction *)
-        destruct (H 0 s) as (s1 & _ & _ & (Hv0 & Hlt)).
-        { split; [ exact PS | split; [ exact Hb | exact Hzero ] ]. }
-        lia.
-      + exists s. split; [ apply cexec_cstar_done | split; assumption ].
-    - destruct (beval b s) eqn:Hb.
-      + destruct (H (aeval variant s) s) as (s1 & EXEC1 & PS1 & (Hv0 & Hlt)).
-        { split; [ exact PS | split; [ exact Hb | reflexivity ] ]. }
-        assert (Hsmaller : (Z.to_nat (aeval variant s1) <= n)%nat).
-        { assert ((Z.to_nat (aeval variant s1) < Z.to_nat (aeval variant s))%nat)
-            by (apply (proj1 (Z2Nat.inj_lt _ _ Hv0 Hvnn)); exact Hlt).
-          lia. }
-        destruct (IH s1 Hv0 Hsmaller PS1) as (s2 & EXEC2 & PS2 & Hb2).
-        exists s2. split; [ | split; assumption ].
-        eapply cexec_cstar_step_ok.
-        * apply cexec_seq with s; [ apply cexec_assume; exact Hb | exact EXEC1 ].
-        * exact EXEC2.
-      + exists s. split; [ apply cexec_cstar_done | split; assumption ].
-  }
-  (* Main argument: case-split on initial b. The b-true case takes one
-     iteration first so that the variant becomes non-negative before HELP. *)
-  destruct (beval b s0) eqn:Hb.
-  - destruct (H (aeval variant s0) s0) as (s1 & EXEC1 & PS1 & (Hv0 & _)).
-    { split; [ exact PRE0 | split; [ exact Hb | reflexivity ] ]. }
-    destruct (HELP (Z.to_nat (aeval variant s1)) s1 Hv0 (le_n _) PS1)
-      as (sf & EXEC_LOOP & PSf & Hbf).
-    exists sf. split.
-    + apply cexec_seq with sf.
+  intros P variant b c H. apply Triple_intro.
+  - (* Termination: the variant gives a well-founded descent to a [¬b] state.
+       Demonic [H] yields a unique decreasing successor via [Triple_func]. *)
+    intros s0 PRE0.
+    assert (HELP: forall n s,
+                0 <= aeval variant s ->
+                (Z.to_nat (aeval variant s) <= n)%nat ->
+                P s ->
+                exists sf,
+                  cexec s (CSTAR (ASSUME b ;; c)) (RNormal sf) /\
+                  P sf /\ beval b sf = false).
+    { induction n as [|n IH]; intros s Hvnn Hn PS.
+      - assert (Hzero : aeval variant s = 0).
+        { destruct (aeval variant s) as [|p|p]; lia. }
+        destruct (beval b s) eqn:Hb.
+        + assert (Hpre : (P //\\ atrue b //\\ aequal variant (aeval variant s)) s).
+          { split; [ exact PS | split; [ exact Hb | reflexivity ] ]. }
+          destruct (Triple_func _ _ _ s (H (aeval variant s)) Hpre)
+            as (s1 & _ & (_ & (Hv0 & Hlt))).
+          rewrite Hzero in Hlt. lia.
+        + exists s. split; [ apply cexec_cstar_done | split; assumption ].
+      - destruct (beval b s) eqn:Hb.
+        + assert (Hpre : (P //\\ atrue b //\\ aequal variant (aeval variant s)) s).
+          { split; [ exact PS | split; [ exact Hb | reflexivity ] ]. }
+          destruct (Triple_func _ _ _ s (H (aeval variant s)) Hpre)
+            as (s1 & EXEC1 & (PS1 & (Hv0 & Hlt))).
+          assert (Hsmaller : (Z.to_nat (aeval variant s1) <= n)%nat).
+          { assert ((Z.to_nat (aeval variant s1) < Z.to_nat (aeval variant s))%nat)
+              by (apply (proj1 (Z2Nat.inj_lt _ _ Hv0 Hvnn)); exact Hlt).
+            lia. }
+          destruct (IH s1 Hv0 Hsmaller PS1) as (s2 & EXEC2 & PS2 & Hb2).
+          exists s2. split; [ | split; assumption ].
+          eapply cexec_cstar_step_ok.
+          * apply cexec_seq with s; [ apply cexec_assume; exact Hb | exact EXEC1 ].
+          * exact EXEC2.
+        + exists s. split; [ apply cexec_cstar_done | split; assumption ].
+    }
+    destruct (beval b s0) eqn:Hb.
+    + assert (Hpre0 : (P //\\ atrue b //\\ aequal variant (aeval variant s0)) s0).
+      { split; [ exact PRE0 | split; [ exact Hb | reflexivity ] ]. }
+      destruct (Triple_func _ _ _ s0 (H (aeval variant s0)) Hpre0)
+        as (s1 & EXEC1 & (PS1 & (Hv0 & _))).
+      destruct (HELP (Z.to_nat (aeval variant s1)) s1 Hv0 (le_n _) PS1)
+        as (sf & EXEC_LOOP & PSf & Hbf).
+      exists (RNormal sf). apply cexec_seq with sf.
       * eapply cexec_cstar_step_ok.
         -- apply cexec_seq with s0;
              [ apply cexec_assume; exact Hb | exact EXEC1 ].
         -- exact EXEC_LOOP.
       * apply cexec_assume; cbn; rewrite Hbf; reflexivity.
-    + split; [ exact PSf | exact Hbf ].
-  - exists s0. split.
-    + apply cexec_seq with s0.
+    + exists (RNormal s0). apply cexec_seq with s0.
       * apply cexec_cstar_done.
       * apply cexec_assume; cbn; rewrite Hb; reflexivity.
-    + split; [ exact PRE0 | exact Hb ].
+  - (* Safety: the body never errors and preserves [P], so the weak
+       partial-correctness [triple_while] applies. *)
+    assert (Hbody : ⦃⦃ atrue b //\\ P ⦄⦄ c ⦃⦃ P ⦄⦄).
+    { intros s r EXEC Hpre.
+      assert (Hpre' : (P //\\ atrue b //\\ aequal variant (aeval variant s)) s).
+      { destruct Hpre as [Hbv HPs].
+        split; [ exact HPs | split; [ exact Hbv | reflexivity ] ]. }
+      destruct (Triple_safe _ _ _ (H (aeval variant s)) s r EXEC Hpre')
+        as (s' & EQ & (HP' & _)).
+      exists s'. split; [ exact EQ | exact HP' ]. }
+    eapply triple_consequence;
+      [ apply (triple_while P b c Hbody)
+      | intros s HP; exact HP
+      | intros s Hpost; destruct Hpost as [Hbf HPs]; split; [ exact HPs | exact Hbf ] ].
 Qed.
 
 Module Soundness.
