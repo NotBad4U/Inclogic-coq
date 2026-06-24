@@ -482,15 +482,6 @@ Qed.
 
 End SilCompleteness.
 
-
-(** Soundness and completeness packaged: derivability = validity. *)
-Theorem Sil_adequate : forall P c Q,
-    ⟪ P ⟫ c ⟪ Q ⟫ <-> ⟪⟪ P ⟫⟫ c ⟪⟪ Q ⟫⟫.
-Proof.
-  intros P c Q. split;
-    [ apply SilSoundness.Sil_triple_sound | apply SilCompleteness.Sil_complete ].
-Qed.
-
 (** [wp] (from [Module Wp]) back in scope for the dual characterizations below. *)
 Import Wp.
 
@@ -534,10 +525,41 @@ Proof.
   - intros [r0 [H Hr0]]. subst r0. exact H.
 Qed.
 
+(** ** [sp] and [wp] are the same thing, transposed
+
+    The strongest post [isp] (forward image) and the weakest precondition [wp]
+    (backward image) are not literally equal — they have different types
+    ([postassertion] vs [assertion]) — but they are the two transposes of the
+    one relation [cexec], so they carry exactly the same information.
+
+    Pointwise, on singletons, they *coincide*: both [isp c {s}] at [r] and
+    [wp c {r}] at [s] say precisely [cexec s c r]. *)
+Lemma sp_wp_point : forall s c r,
+  isp c (fun x => x = s) r <-> wp c (fun y => y = r) s.
+Proof.
+  intros s c r. split.
+  - intros [s0 [-> HX]]. exists r. split; [ exact HX | reflexivity ].
+  - intros [r0 [HX ->]]. exists s. split; [ reflexivity | exact HX ].
+Qed.
+
+(** In general they are *adjoint* (Frobenius reciprocity): the forward image of
+    [P] meets [Q] iff [P] meets the backward image of [Q].  Both sides unfold to
+    [exists s r, P s /\ cexec s c r /\ Q r] — the witnessing transition, read
+    from either end. *)
+Theorem sp_wp_adjoint : forall P c Q,
+  (exists r, isp c P r /\ Q r) <-> (exists s, P s /\ wp c Q s).
+Proof.
+  intros P c Q. split.
+  - intros [r [[s [HP HX]] HQ]].
+    exists s. split; [ exact HP | exists r; split; [ exact HX | exact HQ ] ].
+  - intros [s [HP [r [HX HQ]]]].
+    exists r. split; [ exists s; split; [ exact HP | exact HX ] | exact HQ ].
+Qed.
+
 (** Atomic agreement: on singletons IL and SIL triples coincide — both assert
     exactly that [c] can step from [s] to [r]. This is the shared kernel of the
     two logics. *)
-Theorem sil_inc_atomic : forall s c r,
+Lemma sil_inc_atomic : forall s c r,
   ⟪⟪ fun x => x = s ⟫⟫ c ⟪⟪ fun y => y = r ⟫⟫
   <-> IncTriple (fun x => x = s) c (fun y => y = r).
 Proof.
@@ -555,7 +577,7 @@ Qed.
     IL distributes over disjunction in the POSTcondition, whereas SIL
     distributes over disjunction in the PREcondition.  This asymmetry is
     exactly why "IL drops disjuncts in postconditions, SIL in preconditions". *)
-Theorem Inc_split_post : forall P c (Q1 Q2: postassertion),
+Lemma Inc_split_post : forall P c (Q1 Q2: postassertion),
   IncTriple P c (fun r => Q1 r \/ Q2 r) <-> IncTriple P c Q1 /\ IncTriple P c Q2.
 Proof.
   intros P c Q1 Q2. split.
@@ -565,7 +587,7 @@ Proof.
   - intros [H1 H2] r [Hr | Hr]; [ apply H1 | apply H2 ]; exact Hr.
 Qed.
 
-Theorem Sil_split_pre : forall (P1 P2: assertion) c Q,
+Lemma Sil_split_pre : forall (P1 P2: assertion) c Q,
   ⟪⟪ P1 \\// P2 ⟫⟫ c ⟪⟪ Q ⟫⟫ <-> ⟪⟪ P1 ⟫⟫ c ⟪⟪ Q ⟫⟫ /\ ⟪⟪ P2 ⟫⟫ c ⟪⟪ Q ⟫⟫.
 Proof.
   intros P1 P2 c Q. split.

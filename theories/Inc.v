@@ -952,6 +952,95 @@ Proof.
   intros P c Q HT r HQ. exact (HT r HQ).
 Qed.
 
+(** ** Weakest precondition, and how it links to the strongest post
+
+    [sem_sp c P : postassertion] is the *image* of [P] under [c] — the outcomes
+    reachable from some [P]-state.  Two backward (precondition) transformers are
+    its companions:
+
+    - [sem_wp c Q]  — the *existential* preimage: the states from which [c]
+      *can* reach an outcome in [Q].  This is the weakest precondition of
+      incorrectness / reverse-Hoare logic (angelic, under-approximate).
+    - [sem_wlp c Q] — the *universal* preimage: the states from which *every*
+      outcome of [c] lands in [Q].  This is the demonic weakest (liberal)
+      precondition of Hoare logic.
+
+    [sp] and [wp] are NOT equal — they don't even share a type.  What links them
+    is a *Galois adjunction*: [sem_sp c] is the lower adjoint of [sem_wlp c].
+    That adjunction is the precise sense in which "sp and wp are equivalent":
+    each determines the other. *)
+
+Definition sem_wp (c: com) (Q: postassertion) : assertion :=
+  fun s => exists r, cexec s c r /\ Q r.
+
+Definition sem_wlp (c: com) (Q: postassertion) : assertion :=
+  fun s => forall r, cexec s c r -> Q r.
+
+(** The adjunction [sem_sp c ⊣ sem_wlp c]: pushing [P] forward and asking that
+    it land inside [Q] is the same as asking [P] was already inside the
+    (liberal) preimage of [Q].  This Galois connection is the link between the
+    strongest post and the (demonic) weakest precondition. *)
+Lemma sp_wlp_galois: forall P c (Q: postassertion),
+    (sem_sp c P --* Q) <-> (P -->> sem_wlp c Q).
+Proof.
+  intros P c Q. split.
+  - intros H s HP r EXEC. apply H. exists s. split; [ exact HP | exact EXEC ].
+  - intros H r (s & HP & EXEC). exact (H s HP r EXEC).
+Qed.
+
+(** The forward/backward duality between [sem_sp] and the *existential*
+    preimage [sem_wp]: the image of [P] meets [Q] exactly when [P] meets the
+    preimage of [Q].  Both sides say "there is a [P]-to-[Q] execution of [c]".
+    This is the witness-level link between sp and the (angelic) wp. *)
+Lemma sp_wp_meet: forall P c (Q: postassertion),
+    (exists r, sem_sp c P r /\ Q r) <-> (exists s, P s /\ sem_wp c Q s).
+Proof.
+  intros P c Q. split.
+  - intros (r & (s & HP & EXEC) & HQ).
+    exists s. split; [ exact HP | exists r; split; [ exact EXEC | exact HQ ] ].
+  - intros (s & HP & (r & EXEC & HQ)).
+    exists r. split; [ exists s; split; [ exact HP | exact EXEC ] | exact HQ ].
+Qed.
+
+(** Incorrectness caveat.  An IL triple is the *reverse* inclusion below: every
+    [Q]-outcome must have a [P]-predecessor.  Hence its principal transformer is
+    the strongest post [sem_sp] (cf. [sem_sp_strongest]), not a weakest
+    precondition: enlarging [P] only makes [Q --* sem_sp c P] easier to satisfy,
+    so there is no *weakest* valid [P].  [sem_wp] remains the right backward
+    operator for IL — but it is the order-*dual* of [sem_sp] (via [sp_wp_meet]),
+    not its adjoint (that adjoint, [sem_wlp], characterises the Hoare reading). *)
+Lemma il_triple_iff_sp: forall P c (Q: postassertion),
+    ⟦⟦ P ⟧⟧ c ⟦⟦ Q ⟧⟧ <-> (Q --* sem_sp c P).
+Proof.
+  intros P c Q. split.
+  - intros H r HQ. exact (H r HQ).
+  - intros H r HQ. exact (H r HQ).
+Qed.
+
+(** Relation to Hoare.v.  We do *not* redefine the demonic [wlp] from scratch:
+    Hoare.v's weakest liberal precondition [Completness.wlp] is exactly this
+    [sem_wlp] specialised to the *ok-fragment* postassertion [ok ↑ Q] — the
+    partial-correctness reading in which an error counts as failure.  So
+    [sem_wlp] is the postassertion-level generalisation (errors are handled by
+    [Q], not hard-wired to [False]) and Hoare's [wlp] is recovered as the
+    instance below.  This is why the [sem_sp ⊣ sem_wlp] adjunction needs the
+    general [sem_wlp]: [sem_sp c P] emits error outcomes, which Hoare's [wlp]
+    would reject outright.
+
+    For [sem_wp] there is nothing in Hoare.v to reuse: Hoare logic is demonic
+    and only needs the *universal* preimage; the *existential* preimage is
+    proper to incorrectness / reverse-Hoare logic. *)
+Lemma hoare_wlp_is_sem_wlp_ok: forall c Q s,
+    Completness.wlp c Q s
+    <-> sem_wlp c (fun r => match r with RNormal s' => Q s' | RError _ => False end) s.
+Proof.
+  intros c Q s. unfold Completness.wlp, sem_wlp. split.
+  - intros H r EXEC. destruct (H r EXEC) as (s' & -> & HQ). exact HQ.
+  - intros H r EXEC. specialize (H r EXEC). destruct r as [s' | s'].
+    + exists s'. split; [ reflexivity | exact H ].
+    + contradiction.
+Qed.
+
 (** ** Syntactic strongest postconditions
 
     [spo c P] / [spe c P] are the strongest normal / erroring postconditions
@@ -1120,7 +1209,7 @@ Qed.
 
 End IncCompleteness.
 
-Module sp.
+Module SP.
 
   (** This is the language of commands where [WHILE] loops are annotated by an invariant [Inv]. *)
   Inductive acom: Type :=
@@ -1364,5 +1453,5 @@ Fixpoint vcond (P: assertion) (c: acom) : Prop :=
     intros P c Q [Hv Himp].
     eapply Inc_post_weaken; [ exact (sp_sound c P Hv) | exact Himp ].
   Qed.
-
-End sp.
+  
+End SP.
