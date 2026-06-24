@@ -8,3 +8,4 @@ theories/Sil.v
 theories/ExampleInc.v
 theories/KatInc.v
 theories/KatIncImp.v
+theories/Assumptions.v
